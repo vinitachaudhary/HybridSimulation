@@ -38,6 +38,7 @@ EXECUTE_ON_STARTUP(
     e->insert(SELF_REGISTER, "SELF_REGISTER");
     e->insert(SELF_UNREGISTER, "SELF_UNREGISTER");
     e->insert(REMAIN_NEIGHBOR, "REMAIN_NEIGHBOR");
+    e->insert(TREEBONE_PROMOTION, "TREEBONE_PROMOTION");
 );
 
 Register_Class(DenaCastTrackerMessage);
@@ -48,8 +49,10 @@ DenaCastTrackerMessage::DenaCastTrackerMessage(const char *name, int kind) : Bas
     neighbors_arraysize = 0;
     this->neighbors_var = 0;
     this->neighborSize_var = 0;
+    this->treeNeighborSize_var = 0;
     this->isServer_var = 0;
     this->remainNeighbor_var = 0;
+    this->isTreebone_var = 0;
 }
 
 DenaCastTrackerMessage::DenaCastTrackerMessage(const DenaCastTrackerMessage& other) : BaseOverlayMessage()
@@ -77,8 +80,10 @@ DenaCastTrackerMessage& DenaCastTrackerMessage::operator=(const DenaCastTrackerM
     for (unsigned int i=0; i<neighbors_arraysize; i++)
         this->neighbors_var[i] = other.neighbors_var[i];
     this->neighborSize_var = other.neighborSize_var;
+    this->treeNeighborSize_var = other.treeNeighborSize_var;
     this->isServer_var = other.isServer_var;
     this->remainNeighbor_var = other.remainNeighbor_var;
+    this->isTreebone_var = other.isTreebone_var;
     return *this;
 }
 
@@ -90,8 +95,10 @@ void DenaCastTrackerMessage::parsimPack(cCommBuffer *b)
     b->pack(neighbors_arraysize);
     doPacking(b,this->neighbors_var,neighbors_arraysize);
     doPacking(b,this->neighborSize_var);
+    doPacking(b,this->treeNeighborSize_var);
     doPacking(b,this->isServer_var);
     doPacking(b,this->remainNeighbor_var);
+    doPacking(b,this->isTreebone_var);
 }
 
 void DenaCastTrackerMessage::parsimUnpack(cCommBuffer *b)
@@ -108,8 +115,10 @@ void DenaCastTrackerMessage::parsimUnpack(cCommBuffer *b)
         doUnpacking(b,this->neighbors_var,neighbors_arraysize);
     }
     doUnpacking(b,this->neighborSize_var);
+    doUnpacking(b,this->treeNeighborSize_var);
     doUnpacking(b,this->isServer_var);
     doUnpacking(b,this->remainNeighbor_var);
+    doUnpacking(b,this->isTreebone_var);
 }
 
 int DenaCastTrackerMessage::getCommand() const
@@ -170,6 +179,16 @@ void DenaCastTrackerMessage::setNeighborSize(int neighborSize_var)
     this->neighborSize_var = neighborSize_var;
 }
 
+int DenaCastTrackerMessage::getTreeNeighborSize() const
+{
+    return treeNeighborSize_var;
+}
+
+void DenaCastTrackerMessage::setTreeNeighborSize(int treeNeighborSize_var)
+{
+    this->treeNeighborSize_var = treeNeighborSize_var;
+}
+
 bool DenaCastTrackerMessage::getIsServer() const
 {
     return isServer_var;
@@ -188,6 +207,16 @@ int DenaCastTrackerMessage::getRemainNeighbor() const
 void DenaCastTrackerMessage::setRemainNeighbor(int remainNeighbor_var)
 {
     this->remainNeighbor_var = remainNeighbor_var;
+}
+
+bool DenaCastTrackerMessage::getIsTreebone() const
+{
+    return isTreebone_var;
+}
+
+void DenaCastTrackerMessage::setIsTreebone(bool isTreebone_var)
+{
+    this->isTreebone_var = isTreebone_var;
 }
 
 class DenaCastTrackerMessageDescriptor : public cClassDescriptor
@@ -237,7 +266,7 @@ const char *DenaCastTrackerMessageDescriptor::getProperty(const char *propertyna
 int DenaCastTrackerMessageDescriptor::getFieldCount(void *object) const
 {
     cClassDescriptor *basedesc = getBaseClassDescriptor();
-    return basedesc ? 6+basedesc->getFieldCount(object) : 6;
+    return basedesc ? 8+basedesc->getFieldCount(object) : 8;
 }
 
 unsigned int DenaCastTrackerMessageDescriptor::getFieldTypeFlags(void *object, int field) const
@@ -255,8 +284,10 @@ unsigned int DenaCastTrackerMessageDescriptor::getFieldTypeFlags(void *object, i
         FD_ISEDITABLE,
         FD_ISEDITABLE,
         FD_ISEDITABLE,
+        FD_ISEDITABLE,
+        FD_ISEDITABLE,
     };
-    return (field>=0 && field<6) ? fieldTypeFlags[field] : 0;
+    return (field>=0 && field<8) ? fieldTypeFlags[field] : 0;
 }
 
 const char *DenaCastTrackerMessageDescriptor::getFieldName(void *object, int field) const
@@ -272,10 +303,12 @@ const char *DenaCastTrackerMessageDescriptor::getFieldName(void *object, int fie
         "srcNode",
         "neighbors",
         "neighborSize",
+        "treeNeighborSize",
         "isServer",
         "remainNeighbor",
+        "isTreebone",
     };
-    return (field>=0 && field<6) ? fieldNames[field] : NULL;
+    return (field>=0 && field<8) ? fieldNames[field] : NULL;
 }
 
 int DenaCastTrackerMessageDescriptor::findField(void *object, const char *fieldName) const
@@ -286,8 +319,10 @@ int DenaCastTrackerMessageDescriptor::findField(void *object, const char *fieldN
     if (fieldName[0]=='s' && strcmp(fieldName, "srcNode")==0) return base+1;
     if (fieldName[0]=='n' && strcmp(fieldName, "neighbors")==0) return base+2;
     if (fieldName[0]=='n' && strcmp(fieldName, "neighborSize")==0) return base+3;
-    if (fieldName[0]=='i' && strcmp(fieldName, "isServer")==0) return base+4;
-    if (fieldName[0]=='r' && strcmp(fieldName, "remainNeighbor")==0) return base+5;
+    if (fieldName[0]=='t' && strcmp(fieldName, "treeNeighborSize")==0) return base+4;
+    if (fieldName[0]=='i' && strcmp(fieldName, "isServer")==0) return base+5;
+    if (fieldName[0]=='r' && strcmp(fieldName, "remainNeighbor")==0) return base+6;
+    if (fieldName[0]=='i' && strcmp(fieldName, "isTreebone")==0) return base+7;
     return basedesc ? basedesc->findField(object, fieldName) : -1;
 }
 
@@ -304,10 +339,12 @@ const char *DenaCastTrackerMessageDescriptor::getFieldTypeString(void *object, i
         "TransportAddress",
         "TransportAddress",
         "int",
+        "int",
         "bool",
         "int",
+        "bool",
     };
-    return (field>=0 && field<6) ? fieldTypeStrings[field] : NULL;
+    return (field>=0 && field<8) ? fieldTypeStrings[field] : NULL;
 }
 
 const char *DenaCastTrackerMessageDescriptor::getFieldProperty(void *object, int field, const char *propertyname) const
@@ -355,8 +392,10 @@ std::string DenaCastTrackerMessageDescriptor::getFieldAsString(void *object, int
         case 1: {std::stringstream out; out << pp->getSrcNode(); return out.str();}
         case 2: {std::stringstream out; out << pp->getNeighbors(i); return out.str();}
         case 3: return long2string(pp->getNeighborSize());
-        case 4: return bool2string(pp->getIsServer());
-        case 5: return long2string(pp->getRemainNeighbor());
+        case 4: return long2string(pp->getTreeNeighborSize());
+        case 5: return bool2string(pp->getIsServer());
+        case 6: return long2string(pp->getRemainNeighbor());
+        case 7: return bool2string(pp->getIsTreebone());
         default: return "";
     }
 }
@@ -373,8 +412,10 @@ bool DenaCastTrackerMessageDescriptor::setFieldAsString(void *object, int field,
     switch (field) {
         case 0: pp->setCommand(string2long(value)); return true;
         case 3: pp->setNeighborSize(string2long(value)); return true;
-        case 4: pp->setIsServer(string2bool(value)); return true;
-        case 5: pp->setRemainNeighbor(string2long(value)); return true;
+        case 4: pp->setTreeNeighborSize(string2long(value)); return true;
+        case 5: pp->setIsServer(string2bool(value)); return true;
+        case 6: pp->setRemainNeighbor(string2long(value)); return true;
+        case 7: pp->setIsTreebone(string2bool(value)); return true;
         default: return false;
     }
 }
@@ -394,8 +435,10 @@ const char *DenaCastTrackerMessageDescriptor::getFieldStructName(void *object, i
         NULL,
         NULL,
         NULL,
+        NULL,
+        NULL,
     };
-    return (field>=0 && field<6) ? fieldStructNames[field] : NULL;
+    return (field>=0 && field<8) ? fieldStructNames[field] : NULL;
 }
 
 void *DenaCastTrackerMessageDescriptor::getFieldStructPointer(void *object, int field, int i) const

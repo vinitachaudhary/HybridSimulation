@@ -51,4 +51,8 @@ packet SimpleMeshMessage extends BaseOverlayMessage
 {
 	int command @enum(SIMPLEMESHCommand);
 	TransportAddress srcNode;  // address of the node that sent the message
+	bool isTreebone; 			// true if node belongs to treebone
+	int remainNeighbor;			// number of remaining neighbor node can accept
+	int treeLevel;				// node depth in tree
+	bool addAsChild;			// true if node wants to be added as child
 }

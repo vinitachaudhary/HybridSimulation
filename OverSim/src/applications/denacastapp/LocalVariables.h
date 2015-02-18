@@ -23,12 +23,22 @@
  * @author Yasser Seyyedi, Behnam Ahmadifar
  */
 
+// edited by vinita
+
 #ifndef LOCALVARIABLES_H_
 #define LOCALVARIABLES_H_
 
 #include <omnetpp.h>
 #include "VideoBuffer.h"
 #include <TransportAddress.h>
+
+struct neighborInfo
+{
+	int remainedNeighbor;		/**< number of remained neighbor that node could accept*/
+	double timeOut;             /**< Time out for neighbor notification*/
+	bool isTreebone;			// true if the node is in treebone
+	int treeLevel;				// node depth in the tree - source at level 0
+};
 
 class LocalVariables: public cSimpleModule
 {
@@ -85,7 +95,14 @@ public:
 
     VideoBuffer* videoBuffer; /**<Create new buffer for existing host to keep latest Chunks */
     BufferMap* hostBufferMap; /**<Create our own Buffer map to announce other neighbors */
-    std::vector <TransportAddress> neighbors;	/**< Vector in which keeps node neighbors' TransportAddresses*/
+    std::vector <TransportAddress> neighbors;
+    std::map <TransportAddress, neighborInfo> neighborMap;	/**< Map from node's neighbors' TransportAddresses to their information*/
+    bool isTreebone;					// true if node member of treebone
+    bool hasTreeboneParent;				// true if node has a treebone parent
+    TransportAddress treeboneParent;	// TransportAddress of treebone parent
+    std::vector <TransportAddress> treeboneChildren;	// Vector of transportAddress of treebone children
+    int treeLevel;			// node depth in tree, -1 for invalid
+
 protected:
     int windowOfIntrest; /**< size of window of interest in second*/
 	int Fps; /**< Frame per second*/

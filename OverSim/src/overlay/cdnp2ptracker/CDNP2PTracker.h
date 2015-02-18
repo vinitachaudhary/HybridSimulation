@@ -23,6 +23,8 @@
  * @author Yasser Seyyedi, Behnam Ahmadifar
  */
 
+// edited by vinita
+
 #ifndef CDNP2PTRACKER_H_
 #define CDNP2PTRACKER_H_
 
@@ -38,6 +40,7 @@ struct nodeInfo
 	TransportAddress tAddress;		/**< address of node */
 	int remainedNeighbor;		/**< number of remained neighbor that node could accept*/
 	double timeOut;             /**< Time out for neighbor notification*/
+	bool isTreebone;			// true if the node is in treebone
 };
 class CDNP2PTracker : public BaseOverlay
 {
@@ -45,30 +48,37 @@ public:
 	virtual void initializeOverlay(int stage);
 	virtual void finishOverlay();
 	virtual void handleUDPMessage(BaseOverlayMessage* msg);
+	virtual void handleTimerEvent(cMessage* msg);
 	virtual void joinOverlay();
 protected:
     bool connectedMesh;	/**< if we have multiple server connects mesh that form under them*/
     /**
      * fill the list with node that are going to send to requested peer
      * @param list list to be sent
+     * @param nodeList treeboneList or peerList
      * @param node the node that request in order to exclude from list
      * @param size how many peer should be insert in the list
      */
-    void FillList(std::vector <TransportAddress>& list, TransportAddress& node, unsigned int size);
+    void FillList(std::vector <TransportAddress>& list, std::multimap <int,nodeInfo> nodeList,
+    		TransportAddress& node, unsigned int size);
     /*
      * check a given vector that contains a node
      * @param node the given node
      * @param list the given list
+     * @param treeNeighborSize the number of maximum treebone nodes that can be filled in list
      * @return Boolean true if the list contains node
      */
     bool isInVector(TransportAddress& Node, std::vector <TransportAddress> &list);
     /*
-     * calculate the size of node that tracker should retrun to requested node
+     * calculate the size of node that tracker should return to requested node
      * @param neighborSize number of node that a peer requested
      * @param sourceNode the server that node is member of
+     * @param treeNeighborSize the function calculates this parameter as the no. of treebone nodes it can return
+     * @param meshNeighborSize the function calculates this parameter as the no. of mesh nodes it can return
      * @return integer number of node that a sever could return
      */
-    int calculateSize(unsigned int neighborSize, TransportAddress& sourceNode);
+    int calculateSize(unsigned int neighborSize, TransportAddress& sourceNode,
+    		unsigned int& treeNeighborSize, unsigned int& meshNeighborSize);
     /**
      * specify whether it is the time to connect meshes under servers (time to return nodes from other meshes)
      * @return Boolean true if it is time
@@ -85,14 +95,22 @@ protected:
      * @param node the given node
      */
     void SetServerNumber(TransportAddress& node);
+
     /*
-     *
+     * function to check time out of peers in overlay
+     * @param treeboneList or peerList
      */
-    void checkPeersTimOuts();
-    /**< map contains all peer that send at least one message to server
+    void checkPeersTimeOuts(std::multimap <int,nodeInfo>);
+    /**< map contains all mesh peer that send at least one message to server
      * integer = serverID, TransportAddress = peer TransportAddress
      * */
+
+    cMessage* checkPeerTimer;	// Periodic self message to check peer timeouts
+
     std::multimap <int,nodeInfo> peerList;
+
+	// multimap of serverID to peers in Treebone
+    std::multimap <int,nodeInfo> treeboneList;
     /**< map contains all peer that send at least one message to server
      * TransportAddress = Peer TransportAddress , integer = serverID
      * */

@@ -38,7 +38,20 @@ void CDNP2PTracker::initializeOverlay(int stage)
 void CDNP2PTracker::joinOverlay()
 {
 	setOverlayReady(true);
+	checkPeerTimer = new cMessage ("checkPeerTimer");
+	scheduleAt(simTime()+11,checkPeerTimer);
 }
+
+void CDNP2PTracker::handleTimerEvent(cMessage* msg)
+{
+	if (msg == checkPeerTimer) {
+		checkPeersTimeOuts(treeboneList);
+		checkPeersTimeOuts(peerList);
+		scheduleAt(simTime()+11,checkPeerTimer);
+	}
+	delete msg;
+}
+
 void CDNP2PTracker::handleUDPMessage(BaseOverlayMessage* msg)
 {
 	if (dynamic_cast<DenaCastTrackerMessage*>(msg) != NULL)
@@ -50,10 +63,25 @@ void CDNP2PTracker::handleUDPMessage(BaseOverlayMessage* msg)
 			NeighborRsp->setCommand(NEIGHBOR_RESPONSE);
 			NeighborRsp->setSrcNode(thisNode);
 			unsigned int size = 0;
+			unsigned int treeNeighborSize, meshNeighborSize;
 			SetServerNumber(trackerMsg->getSrcNode());
-			size = calculateSize(trackerMsg->getNeighborSize(), trackerMsg->getSrcNode());
+			size = calculateSize(trackerMsg->getNeighborSize(), trackerMsg->getSrcNode(),
+					treeNeighborSize, meshNeighborSize);
+
+			int tempTreeNeighborSize = treeNeighborSize;
+
+			if (treeNeighborSize > (int)0.7*size) {
+				tempTreeNeighborSize = (int)0.7*size;
+				meshNeighborSize = std::min(meshNeighborSize, size-tempTreeNeighborSize);
+				treeNeighborSize = size - meshNeighborSize;
+			}
+
+			//std::cout<<"treeneighborSize : "<<treeNeighborSize<<"meshNeighborSize : "<<meshNeighborSize<<endl;
+
 			std::vector <TransportAddress> list;
-			FillList(list,trackerMsg->getSrcNode(),size);
+			FillList(list, treeboneList, trackerMsg->getSrcNode(),treeNeighborSize);
+			FillList(list, peerList, trackerMsg->getSrcNode(),size);
+			NeighborRsp->setTreeNeighborSize(treeNeighborSize);
 			NeighborRsp->setNeighborsArraySize(size);
 			for(unsigned int i=0 ; i<size ; i++ )
 				NeighborRsp->setNeighbors(i,list[i]);
@@ -66,27 +94,45 @@ void CDNP2PTracker::handleUDPMessage(BaseOverlayMessage* msg)
 			nF.tAddress = trackerMsg->getSrcNode();
 			nF.remainedNeighbor = trackerMsg->getRemainNeighbor();
 			nF.timeOut = simTime().dbl();
+			nF.isTreebone = trackerMsg->getIsTreebone();
+
 			if(trackerMsg->getIsServer())
 			{
 				serverNum += 1;
-				peerList.insert (std::make_pair<int,nodeInfo>(serverNum,nF));
+				treeboneList.insert (std::make_pair<int,nodeInfo>(serverNum,nF));
 				peerServers.insert(std::make_pair<NodeHandle,int>(trackerMsg->getSrcNode(),serverNum));
 			}
 			else
 			{
 				int selectServer = getServerNumber(trackerMsg->getSrcNode());
-				peerList.insert (std::make_pair<int,nodeInfo>(selectServer,nF));
+				if (nF.isTreebone)
+					treeboneList.insert (std::make_pair<int,nodeInfo>(selectServer,nF));
+				else
+					peerList.insert (std::make_pair<int,nodeInfo>(selectServer,nF));
 			}
 		}
 		else if(trackerMsg->getCommand() == SELF_UNREGISTER)
 		{
-			std::multimap <int,nodeInfo>::iterator nodeIt = peerList.begin();
-			for(nodeIt = peerList.begin() ; nodeIt != peerList.end() ; nodeIt++)
-			{
-				if(nodeIt->second.tAddress.getAddress() == trackerMsg->getSrcNode().getAddress())
+			if (trackerMsg->getIsTreebone()) {
+				std::multimap <int,nodeInfo>::iterator nodeIt = treeboneList.begin();
+				for(nodeIt = treeboneList.begin() ; nodeIt != treeboneList.end() ; nodeIt++)
 				{
-					peerList.erase(nodeIt);
-					break;
+					if(nodeIt->second.tAddress.getAddress() == trackerMsg->getSrcNode().getAddress())
+					{
+						treeboneList.erase(nodeIt);
+						break;
+					}
+				}
+			}
+			else {
+				std::multimap <int,nodeInfo>::iterator nodeIt = peerList.begin();
+				for(nodeIt = peerList.begin() ; nodeIt != peerList.end() ; nodeIt++)
+				{
+					if(nodeIt->second.tAddress.getAddress() == trackerMsg->getSrcNode().getAddress())
+					{
+						peerList.erase(nodeIt);
+						break;
+					}
 				}
 			}
 			peerServers.erase(trackerMsg->getSrcNode());
@@ -96,15 +142,48 @@ void CDNP2PTracker::handleUDPMessage(BaseOverlayMessage* msg)
 			nodeInfo nF;
 			nF.tAddress = trackerMsg->getSrcNode();
 			nF.remainedNeighbor = trackerMsg->getRemainNeighbor();
+			nF.isTreebone = trackerMsg->getIsTreebone();
+			std::multimap <int,nodeInfo>::iterator nodeIt;
+
+			if (nF.isTreebone) {
+				for(nodeIt = treeboneList.begin() ; nodeIt != treeboneList.end() ; nodeIt++)
+					if(nodeIt->second.tAddress == nF.tAddress)
+					{
+						nodeIt->second.remainedNeighbor = nF.remainedNeighbor;
+						nodeIt->second.timeOut =  simTime().dbl();
+						break;
+					}
+			}
+			else {
+				for(nodeIt = peerList.begin() ; nodeIt != peerList.end() ; nodeIt++)
+					if(nodeIt->second.tAddress == nF.tAddress)
+					{
+						nodeIt->second.remainedNeighbor = nF.remainedNeighbor;
+						nodeIt->second.timeOut =  simTime().dbl();
+						break;
+					}
+			}
+//			checkPeersTimOuts();
+		}
+		else if (trackerMsg->getCommand() == TREEBONE_PROMOTION) {
+			nodeInfo nF;
+			nF.tAddress = trackerMsg->getSrcNode();
+			nF.remainedNeighbor = trackerMsg->getRemainNeighbor();
+			nF.timeOut = simTime().dbl();
+			nF.isTreebone = true;
+
 			std::multimap <int,nodeInfo>::iterator nodeIt = peerList.begin();
 			for(nodeIt = peerList.begin() ; nodeIt != peerList.end() ; nodeIt++)
-				if(nodeIt->second.tAddress == nF.tAddress)
-				{
-					nodeIt->second.remainedNeighbor = nF.remainedNeighbor;
-					nodeIt->second.timeOut =  simTime().dbl();
+			{
+				if(nodeIt->second.tAddress == nF.tAddress) {
+					peerList.erase(nodeIt);
 					break;
 				}
-//			checkPeersTimOuts();
+			}
+
+			int selectServer = getServerNumber(nF.tAddress);
+			treeboneList.insert (std::make_pair<int,nodeInfo>(selectServer,nF));
+			std::cout<<"treebone promoted"<<endl;
 		}
 		delete trackerMsg;
 	}
@@ -115,31 +194,33 @@ void CDNP2PTracker::finishOverlay()
 {
 	setOverlayReady(false);
 }
-void CDNP2PTracker::FillList(std::vector <TransportAddress>& list, TransportAddress& node, unsigned int size)
+void CDNP2PTracker::FillList(std::vector <TransportAddress>& list, std::multimap <int,nodeInfo> nodeList,
+		TransportAddress& node, unsigned int size)
 {
 	int selectServer = getServerNumber(node);
-	std::multimap <int,nodeInfo>::iterator nodeIt = peerList.begin();
+
+	std::multimap <int,nodeInfo>::iterator nodeIt = nodeList.begin();
 
 	while (list.size() < size)
 	{
-		int randomNum = intuniform(1,peerList.size());
+		int randomNum = intuniform(1,nodeList.size());
 		for(int i=1; i<randomNum ; i++)
 			++nodeIt;
 		if(satisfactionConnected())
 		{
-			if(nodeIt != peerList.end()
+			if(nodeIt != nodeList.end()
 					&& nodeIt->second.tAddress != node && !isInVector(nodeIt->second.tAddress,list)
 					&& nodeIt->second.remainedNeighbor > 0)
 				list.push_back(nodeIt->second.tAddress);
 		}
 		else
 		{
-			if(nodeIt != peerList.end() && nodeIt->first == selectServer
+			if(nodeIt != nodeList.end() && nodeIt->first == selectServer
 				&& nodeIt->second.tAddress != node && !isInVector(nodeIt->second.tAddress,list)
 				&& nodeIt->second.remainedNeighbor > 0)
 				list.push_back(nodeIt->second.tAddress);
 		}
-		nodeIt = peerList.begin();
+		nodeIt = nodeList.begin();
 	}
 }
 
@@ -154,39 +235,41 @@ bool CDNP2PTracker::isInVector(TransportAddress& Node, std::vector <TransportAdd
 	}
 	return false;
 }
-int CDNP2PTracker::calculateSize(unsigned int neighborSize, TransportAddress& sourceNode)
+int CDNP2PTracker::calculateSize(unsigned int neighborSize, TransportAddress& sourceNode,
+		unsigned int& treeNeighborSize, unsigned int& meshNeighborSize)
 {
 	int selectServer = getServerNumber(sourceNode);
-	unsigned int sectionSize = 0;
+	meshNeighborSize = 0;
+	treeNeighborSize = 0;
 	std::multimap <int,nodeInfo>::iterator nodeIt = peerList.begin();
 	if(satisfactionConnected())
 	{
 		for(nodeIt = peerList.begin() ; nodeIt != peerList.end() ; nodeIt++)
 			if(nodeIt->second.tAddress != sourceNode && nodeIt->second.remainedNeighbor > 0)
-				sectionSize += 1;
-		if(sectionSize > neighborSize)
-			return neighborSize;
-		else
-			return sectionSize;
+				meshNeighborSize += 1;
+		for(nodeIt = treeboneList.begin() ; nodeIt != treeboneList.end() ; nodeIt++)
+			if(nodeIt->second.tAddress != sourceNode && nodeIt->second.remainedNeighbor > 0)
+				treeNeighborSize += 1;
 	}
 	else
 	{
 		for(nodeIt = peerList.begin() ; nodeIt != peerList.end() ; nodeIt++)
-		{
 			if(nodeIt->first == selectServer && nodeIt->second.tAddress != sourceNode && nodeIt->second.remainedNeighbor > 0)
-				sectionSize += 1;
-		}
-		if(sectionSize > neighborSize)
-			return neighborSize;
-		else
-			return sectionSize;
+				meshNeighborSize += 1;
+		for(nodeIt = treeboneList.begin() ; nodeIt != treeboneList.end() ; nodeIt++)
+			if(nodeIt->first == selectServer && nodeIt->second.tAddress != sourceNode && nodeIt->second.remainedNeighbor > 0)
+				treeNeighborSize += 1;
 	}
+	if(meshNeighborSize + treeNeighborSize > neighborSize)
+		return neighborSize;
+	else
+		return meshNeighborSize + treeNeighborSize;
 }
 bool CDNP2PTracker::satisfactionConnected()
 {
 	if(connectedMesh)
 	{
-		if(5*(serverNum+2) > peerList.size())
+		if(5*(serverNum+2) > peerList.size() + treeboneList.size())
 			return false;
 		else
 			return true;
@@ -225,18 +308,23 @@ void CDNP2PTracker::SetServerNumber(TransportAddress& node)
 		peerServers.insert(std::make_pair<TransportAddress,int>(node,index));
 	}
 }
-void CDNP2PTracker::checkPeersTimOuts()
+
+void CDNP2PTracker::checkPeersTimeOuts(std::multimap <int,nodeInfo> list)
 {
-	std::multimap <int,nodeInfo>::iterator nodeIt = peerList.begin();
-	for(nodeIt = peerList.begin() ; nodeIt != peerList.end() ; nodeIt++)
+	std::multimap <int,nodeInfo>::iterator nodeIt, tempIt;
+	nodeIt = list.begin();
+	while (nodeIt != list.end())
 	{
 		if(simTime() - nodeIt->second.timeOut > 10)
 		{
-			peerList.erase(nodeIt);
-			peerServers.erase(nodeIt->second.tAddress);
-			std::cout << "node: " << nodeIt->second.tAddress << "  timeOut: " << simTime() - nodeIt->second.timeOut << std::endl;
+			tempIt=nodeIt;
+			++nodeIt;
+			//std::cout << "node: " << nodeIt->second.tAddress << "  timeOut: " << simTime() - nodeIt->second.timeOut << std::endl;
+			peerServers.erase(tempIt->second.tAddress);
+			list.erase(tempIt);
 			break;
 		}
-
+		else
+			++nodeIt;
 	}
 }

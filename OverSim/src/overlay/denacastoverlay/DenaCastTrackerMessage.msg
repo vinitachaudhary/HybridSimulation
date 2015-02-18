@@ -22,6 +22,8 @@
 // @author Behnam Ahmadifar, Yasser Seyyedi
 //
 
+// edited by vinita
+
 cplusplus {{
 #include <TransportAddress.h>
 #include <CommonMessages_m.h>
@@ -41,6 +43,7 @@ enum TRACKERCommand
     SELF_REGISTER = 3;		//Self Register 
     SELF_UNREGISTER = 4;
     REMAIN_NEIGHBOR = 5;
+    TREEBONE_PROMOTION = 6;
 }
 packet DenaCastTrackerMessage extends BaseOverlayMessage 
 {
@@ -48,6 +51,8 @@ packet DenaCastTrackerMessage extends BaseOverlayMessage
 	TransportAddress srcNode;
 	TransportAddress neighbors[];
 	int neighborSize;
+	int treeNeighborSize;
 	bool isServer;
 	int remainNeighbor;
+	bool isTreebone;
 }

@@ -23,6 +23,8 @@
  * @author Behnam Ahmadifar, Yasser Seyyedi
  */
 
+// edited by vinita
+
 #include "DenaCastOverlay.h"
 #include <GlobalStatistics.h>
 #include <math.h>
@@ -76,8 +78,12 @@ void DenaCastOverlay::handleAppMessage(cMessage* msg)
 			bufferMapExchangeStart = true;
 			firstBufferMapSending = simTime().dbl();
 		}
-		for (unsigned int i=0 ; i!=LV->neighbors.size(); i++)
-			sendMessageToUDP(LV->neighbors[i], denaCastOvelayMsg->dup());
+		/*for (unsigned int i=0 ; i!=LV->neighbors.size(); i++)
+			sendMessageToUDP(LV->neighbors[i], denaCastOvelayMsg->dup());*/
+		std::map <TransportAddress, neighborInfo>::iterator neighborIt;
+		for (neighborIt = LV->neighborMap.begin(); neighborIt != LV->neighborMap.end(); ++neighborIt)
+			sendMessageToUDP(neighborIt->first, denaCastOvelayMsg->dup());
+
 		delete denaCastOvelayMsg;
 	}
 	else if (dynamic_cast<VideoMessage*>(msg) != NULL)

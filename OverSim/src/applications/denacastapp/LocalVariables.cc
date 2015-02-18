@@ -23,6 +23,7 @@
  * @author Yasser Seyyedi, Behnam Ahmadifar
  */
 
+// edited by vinita
 #include "LocalVariables.h"
 
 Define_Module(LocalVariables);
@@ -43,6 +44,9 @@ void LocalVariables::initialize()
     hostBufferMap = new BufferMap();
     hostBufferMap->setValues(bufferSize);
     videoBuffer->updateBufferMap(hostBufferMap);
+    isTreebone = false;
+    hasTreeboneParent = false;
+    treeLevel = -1;
 }
 void LocalVariables::updateLocalBufferMap()
 {

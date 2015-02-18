@@ -23,6 +23,8 @@
  * @author Yasser Seyyedi, Behnam Ahmadifar
  */
 
+// edited by vinita
+
 #include <SimpleInfo.h>
 #include "SimpleMesh.h"
 #include <GlobalStatistics.h>
@@ -50,14 +52,21 @@ void SimpleMesh::initializeOverlay(int stage)
 	videoAverageRate = par("videoAverageRate");
 	adaptiveNeighboring = par("adaptiveNeighboring");
 	serverGradualNeighboring = par("serverGradualNeighboring");
-	if(adaptiveNeighboring)
-		neighborNum = (int)(upBandwidth/(videoAverageRate*1024) + 1);
+
 	if(isSource)
 	{
 		neighborNum = activeNeighbors;
 		getParentModule()->getParentModule()->setName("CDN-Server");
 	}
-    DenaCastOverlay::initializeOverlay(stage);
+
+	//sessionLength = par("sessionLength");
+	sessionLength = atof(ev.getConfig()->getConfigValue("sim-time-limit"));
+	DenaCastOverlay::initializeOverlay(stage);
+
+	if(adaptiveNeighboring)
+			neighborNum = (int)(upBandwidth/(videoAverageRate*1024));
+	//std::cout<<"upBw : "<<upBandwidth<<" neighbor num : "<<neighborNum<<endl;
+
 	WATCH(neighborNum);
 	WATCH(downBandwidth);
 	WATCH(upBandwidth);
@@ -77,7 +86,6 @@ void SimpleMesh::initializeOverlay(int stage)
 	stat_disconnectMessagesBytesSent = 0;
 	stat_addedNeighbors = 0;
 	stat_nummeshJoinRequestTimer = 0;
-
 }
 
 void SimpleMesh::joinOverlay()
@@ -92,6 +100,8 @@ void SimpleMesh::joinOverlay()
 	{
 		meshJoinRequestTimer = new cMessage("meshJoinRequestTimer");
 		scheduleAt(simTime(),meshJoinRequestTimer);
+		treebonePromotionCheckTimer = new cMessage ("treebonePromotionCheckTimer");
+		scheduleAt(simTime(),treebonePromotionCheckTimer);
 	}
 	else
 	{
@@ -99,6 +109,8 @@ void SimpleMesh::joinOverlay()
 		if(serverGradualNeighboring)
 			scheduleAt(simTime()+uniform(15,25),serverNeighborTimer);
 		selfRegister();
+		LV->isTreebone = true;
+		LV->treeLevel = 0;
 	}
 	setOverlayReady(true);
 }
@@ -107,11 +119,11 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 {
 	if(msg == meshJoinRequestTimer)
 	{
-		if(LV->neighbors.size() < activeNeighbors)
+		if(LV->neighborMap.size() == 0)
 		{
 			DenaCastTrackerMessage* NeighborReq = new DenaCastTrackerMessage("NeighborReq");
 			NeighborReq->setCommand(NEIGHBOR_REQUEST);
-			NeighborReq->setNeighborSize(activeNeighbors - LV->neighbors.size());
+			NeighborReq->setNeighborSize(neighborNum - LV->neighborMap.size());
 			NeighborReq->setSrcNode(thisNode);
 			NeighborReq->setIsServer(false);
 
@@ -125,7 +137,7 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 	{
 		DenaCastTrackerMessage* remainNotification = new DenaCastTrackerMessage("remainNotification");
 		remainNotification->setCommand(REMAIN_NEIGHBOR);
-		remainNotification->setRemainNeighbor(activeNeighbors - LV->neighbors.size() + passiveNeighbors);
+		remainNotification->setRemainNeighbor(neighborNum - LV->neighborMap.size());
 		remainNotification->setSrcNode(thisNode);
 		sendMessageToUDP(trackerAddress,remainNotification);
 		scheduleAt(simTime()+2,remainNotificationTimer);
@@ -151,6 +163,30 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 //			scheduleAt(simTime(),remainNotificationTimer);
 //		}
 	}
+	else if (msg == treebonePromotionCheckTimer) {
+		if (!LV->isTreebone && isRegistered && !isSource) {
+			if (simTime() <= 0.1*sessionLength) {
+				//Early Promotion
+				double earlyPromotionProbability = 1/( 0.3* (sessionLength - joinTime) + 1 - (simTime()-joinTime));
+				double randomNum = uniform(0,1);
+				if (randomNum <= earlyPromotionProbability)
+					LV->isTreebone=true;
+			}
+			else {
+				if (simTime() - joinTime >= 0.3* (sessionLength - joinTime))
+					LV->isTreebone = true;
+			}
+			if (LV->isTreebone) {
+				DenaCastTrackerMessage* treebonePromoted = new DenaCastTrackerMessage("treebonePromoted");
+				treebonePromoted->setCommand(TREEBONE_PROMOTION);
+				treebonePromoted->setRemainNeighbor(neighborNum - LV->neighborMap.size());
+				treebonePromoted->setSrcNode(thisNode);
+				sendMessageToUDP(trackerAddress,treebonePromoted);
+			}
+			else
+				scheduleAt(simTime()+1,treebonePromotionCheckTimer);
+		}
+	}
 	else
 		DenaCastOverlay::handleAppMessage(msg);
 }
@@ -165,13 +201,16 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			joinRequest->setCommand(JOIN_REQUEST);
 			joinRequest->setSrcNode(thisNode);
 			joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+			joinRequest->setRemainNeighbor(neighborNum - LV->neighborMap.size());
+			joinRequest->setTreeLevel(LV->treeLevel);
+			joinRequest->setIsTreebone(LV->isTreebone);
 			int limit = 0;
-			if(trackerMsg->getNeighborsArraySize() < activeNeighbors - LV->neighbors.size() )
+			if(trackerMsg->getNeighborsArraySize() < neighborNum - LV->neighborMap.size())
 				limit = trackerMsg->getNeighborsArraySize();
 			else
-				limit = activeNeighbors - LV->neighbors.size();
+				limit = neighborNum - LV->neighborMap.size();
 			for(unsigned int i=0 ; i <trackerMsg->getNeighborsArraySize() ; i++)
-				if(limit-- > 0 && !isInVector(trackerMsg->getNeighbors(i),LV->neighbors))
+				if(limit-- > 0 && LV->neighborMap.find(trackerMsg->getNeighbors(i)) == LV->neighborMap.end())
 					sendMessageToUDP(trackerMsg->getNeighbors(i),joinRequest->dup());
 			delete joinRequest;
 		}
@@ -182,13 +221,23 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 		SimpleMeshMessage* simpleMeshmsg = check_and_cast<SimpleMeshMessage*>(msg);
 		if (simpleMeshmsg->getCommand() == JOIN_REQUEST)
 		{
-			if(LV->neighbors.size() < neighborNum)
+			if(LV->neighborMap.size() < neighborNum)
 			{
-				LV->neighbors.push_back(simpleMeshmsg->getSrcNode());
+				//LV->neighbors.push_back(simpleMeshmsg->getSrcNode());
+				neighborInfo nF;
+				nF.isTreebone = simpleMeshmsg->getIsTreebone();
+				nF.remainedNeighbor = simpleMeshmsg->getRemainNeighbor();
+				nF.timeOut = simTime().dbl();
+				nF.treeLevel = simpleMeshmsg->getTreeLevel();
+				LV->neighborMap.insert(std::make_pair<TransportAddress, neighborInfo> (simpleMeshmsg->getSrcNode(),nF));
+
 				SimpleMeshMessage* joinResponse = new SimpleMeshMessage("joinResponse");
 				joinResponse->setCommand(JOIN_RESPONSE);
 				joinResponse->setSrcNode(thisNode);
 				joinResponse->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				joinResponse->setRemainNeighbor(neighborNum - LV->neighborMap.size());
+				joinResponse->setTreeLevel(LV->treeLevel);
+				joinResponse->setIsTreebone(LV->isTreebone);
 				sendMessageToUDP(simpleMeshmsg->getSrcNode(),joinResponse);
 
 				stat_joinRSP += 1;
@@ -208,18 +257,43 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 		}
 		else if (simpleMeshmsg->getCommand() == JOIN_RESPONSE)
 		{
-			if(LV->neighbors.size() < neighborNum )
+			if(LV->neighborMap.size() < neighborNum )
 			{
-				LV->neighbors.push_back(simpleMeshmsg->getSrcNode());
+				//LV->neighbors.push_back(simpleMeshmsg->getSrcNode());
+				neighborInfo nF;
+				nF.isTreebone = simpleMeshmsg->getIsTreebone();
+				nF.remainedNeighbor = simpleMeshmsg->getRemainNeighbor();
+				nF.timeOut = simTime().dbl();
+				nF.treeLevel = simpleMeshmsg->getTreeLevel();
+				LV->neighborMap.insert(std::make_pair<TransportAddress, neighborInfo> (simpleMeshmsg->getSrcNode(),nF));
+
 				if(!isRegistered)
 					selfRegister();
-				showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
-										 "m=m,50,0,50,0;ls=red,1");
+
 				SimpleMeshMessage* joinAck = new SimpleMeshMessage("joinAck");
 				joinAck->setCommand(JOIN_ACK);
 				joinAck->setSrcNode(thisNode);
 				joinAck->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				joinAck->setAddAsChild(false);
+
+				if (!LV->hasTreeboneParent && nF.isTreebone) {
+					LV->hasTreeboneParent = true;
+					LV->treeLevel = nF.treeLevel + 1;
+					LV->treeboneParent = simpleMeshmsg->getSrcNode();
+					joinAck->setAddAsChild(true);
+					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
+													"m=m,50,0,50,0;ls=red,1");
+				}
+				else
+					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
+														 "m=m,50,0,50,0;ls=green,1");
+
+				joinAck->setRemainNeighbor(neighborNum - LV->neighborMap.size());
+				joinAck->setTreeLevel(LV->treeLevel);
+				joinAck->setIsTreebone(LV->isTreebone);
 				sendMessageToUDP(simpleMeshmsg->getSrcNode(),joinAck);
+
+				//std::cout<<"treeLevel : "<<LV->treeLevel<<endl;
 
 				stat_joinACK += 1;
 				stat_joinACKBytesSent += joinAck->getByteLength();
@@ -238,13 +312,24 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 		}
 		else if(simpleMeshmsg->getCommand() == JOIN_ACK)
 		{
-			if(LV->neighbors.size() <= neighborNum)
+			if(LV->neighborMap.size() <= neighborNum)
 			{
 				if(!isRegistered)
 					selfRegister();
 				stat_addedNeighbors += 1;
-				showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
-										 "m=m,50,0,50,0;ls=red,1");
+
+				std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->neighborMap.find(simpleMeshmsg->getSrcNode());
+
+				nodeIt->second.isTreebone = simpleMeshmsg->getIsTreebone();
+				nodeIt->second.treeLevel = simpleMeshmsg->getTreeLevel();
+				nodeIt->second.remainedNeighbor = simpleMeshmsg->getRemainNeighbor();
+				nodeIt->second.timeOut = simTime().dbl();
+
+				if (simpleMeshmsg->getAddAsChild())
+					LV->treeboneChildren.push_back(simpleMeshmsg->getSrcNode());
+				else
+					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
+													 "m=m,50,0,50,0;ls=green,1");
 			}
 			else
 			{
@@ -253,8 +338,11 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 				joinDeny->setSrcNode(thisNode);
 				joinDeny->setBitLength(SIMPLEMESHMESSAGE_L(msg));
 				sendMessageToUDP(simpleMeshmsg->getSrcNode(),joinDeny);
-				if(isInVector(simpleMeshmsg->getSrcNode(),LV->neighbors))
+				/*if(isInVector(simpleMeshmsg->getSrcNode(),LV->neighbors))
 					deleteVector(simpleMeshmsg->getSrcNode(),LV->neighbors);
+				*/
+				if (LV->neighborMap.find(simpleMeshmsg->getSrcNode()) != LV->neighborMap.end())
+					LV->neighborMap.erase(simpleMeshmsg->getSrcNode());
 				deleteOverlayNeighborArrow(simpleMeshmsg->getSrcNode());
 
 				stat_joinDNY += 1;
@@ -263,8 +351,11 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 		}
 		else if(simpleMeshmsg->getCommand() == JOIN_DENY)
 		{
-			if(isInVector(simpleMeshmsg->getSrcNode(),LV->neighbors))
+			/*if(isInVector(simpleMeshmsg->getSrcNode(),LV->neighbors))
 				deleteVector(simpleMeshmsg->getSrcNode(),LV->neighbors);
+			*/
+			if (LV->neighborMap.find(simpleMeshmsg->getSrcNode()) != LV->neighborMap.end())
+				LV->neighborMap.erase(simpleMeshmsg->getSrcNode());
 			deleteOverlayNeighborArrow(simpleMeshmsg->getSrcNode());
 		}
 		else if(simpleMeshmsg->getCommand() == DISCONNECT)
@@ -286,10 +377,15 @@ void SimpleMesh::handleNodeGracefulLeaveNotification()
 	disconnectMsg->setCommand(DISCONNECT);
 	disconnectMsg->setSrcNode(thisNode);
 	disconnectMsg->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-	for (unsigned int i=0; i != LV->neighbors.size(); i++)
+	/*for (unsigned int i=0; i != LV->neighbors.size(); i++)
 	{
 		sendMessageToUDP(LV->neighbors[i],disconnectMsg->dup());
-		deleteOverlayNeighborArrow(LV->neighbors[i]);
+		deleteOverlayNeighborArrow(LV->neighbors[i]);*/
+
+	std::map <TransportAddress, neighborInfo>::iterator neighborIt;
+	for (neighborIt = LV->neighborMap.begin(); neighborIt != LV->neighborMap.end(); ++neighborIt) {
+		sendMessageToUDP(neighborIt->first,disconnectMsg->dup());
+		deleteOverlayNeighborArrow(neighborIt->first);
 		stat_disconnectMessages += 1;
 		stat_disconnectMessagesBytesSent += disconnectMsg->getByteLength();
 	}
@@ -358,7 +454,9 @@ void SimpleMesh::selfUnRegister()
 }
 void SimpleMesh::disconnectProcess(TransportAddress Node)
 {
-	deleteVector(Node,LV->neighbors);
+	//deleteVector(Node,LV->neighbors);
+	if (LV->neighborMap.find(Node) != LV->neighborMap.end())
+		LV->neighborMap.erase(Node);
 	deleteOverlayNeighborArrow(Node);
 	if(!isSource)
 	{
@@ -372,8 +470,11 @@ void SimpleMesh::disconnectProcess(TransportAddress Node)
 }
 void SimpleMesh::finishOverlay()
 {
-	if(!isSource)
+	if(!isSource) {
     	cancelAndDelete(meshJoinRequestTimer);
+    	if (!LV->isTreebone)
+    		cancelAndDelete(treebonePromotionCheckTimer);
+	}
 	else
 		cancelAndDelete(serverNeighborTimer);
 	globalStatistics->addStdDev("SimpleMesh: JOIN::REQ Messages", stat_joinREQ);

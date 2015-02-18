@@ -23,6 +23,8 @@
  * @author Yasser Seyyedi, Behnam Ahmadifar
  */
 
+// edited by vinita
+
 #ifndef SIMPLEMESH_H_
 #define SIMPLEMESH_H_
 
@@ -48,6 +50,11 @@ protected:
     bool serverGradualNeighboring; /**< true if gradual neighbor is required for source node*/
     TransportAddress trackerAddress; /**< Transport address of tracker node */
     std::map <TransportAddress,double> neighborTimeOut; /**< */
+
+    int sessionLength;		// Session length of simulation
+    simtime_t joinTime;		// time when node joined the overlay - for measurement of node's age
+
+    //std::map <TransportAddress, neighborInfo>::iterator neighborIt;
     /**
      * Register node in the tracker
      */
@@ -66,6 +73,7 @@ protected:
     cMessage* meshJoinRequestTimer; /**< self message for scheduling neighboring*/
     cMessage* remainNotificationTimer; /**< self message for scheduling send notification to server*/
     cMessage* serverNeighborTimer; /**< for gradual neighboring this self message plan for this job */
+    cMessage* treebonePromotionCheckTimer;	// timer to check if the node can be promoted to treebone
 
 
     // statistics

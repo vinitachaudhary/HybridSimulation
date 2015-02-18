@@ -46,6 +46,10 @@ Register_Class(SimpleMeshMessage);
 SimpleMeshMessage::SimpleMeshMessage(const char *name, int kind) : BaseOverlayMessage(name,kind)
 {
     this->command_var = 0;
+    this->isTreebone_var = 0;
+    this->remainNeighbor_var = 0;
+    this->treeLevel_var = 0;
+    this->addAsChild_var = 0;
 }
 
 SimpleMeshMessage::SimpleMeshMessage(const SimpleMeshMessage& other) : BaseOverlayMessage()
@@ -64,6 +68,10 @@ SimpleMeshMessage& SimpleMeshMessage::operator=(const SimpleMeshMessage& other)
     BaseOverlayMessage::operator=(other);
     this->command_var = other.command_var;
     this->srcNode_var = other.srcNode_var;
+    this->isTreebone_var = other.isTreebone_var;
+    this->remainNeighbor_var = other.remainNeighbor_var;
+    this->treeLevel_var = other.treeLevel_var;
+    this->addAsChild_var = other.addAsChild_var;
     return *this;
 }
 
@@ -72,6 +80,10 @@ void SimpleMeshMessage::parsimPack(cCommBuffer *b)
     BaseOverlayMessage::parsimPack(b);
     doPacking(b,this->command_var);
     doPacking(b,this->srcNode_var);
+    doPacking(b,this->isTreebone_var);
+    doPacking(b,this->remainNeighbor_var);
+    doPacking(b,this->treeLevel_var);
+    doPacking(b,this->addAsChild_var);
 }
 
 void SimpleMeshMessage::parsimUnpack(cCommBuffer *b)
@@ -79,6 +91,10 @@ void SimpleMeshMessage::parsimUnpack(cCommBuffer *b)
     BaseOverlayMessage::parsimUnpack(b);
     doUnpacking(b,this->command_var);
     doUnpacking(b,this->srcNode_var);
+    doUnpacking(b,this->isTreebone_var);
+    doUnpacking(b,this->remainNeighbor_var);
+    doUnpacking(b,this->treeLevel_var);
+    doUnpacking(b,this->addAsChild_var);
 }
 
 int SimpleMeshMessage::getCommand() const
@@ -99,6 +115,46 @@ TransportAddress& SimpleMeshMessage::getSrcNode()
 void SimpleMeshMessage::setSrcNode(const TransportAddress& srcNode_var)
 {
     this->srcNode_var = srcNode_var;
+}
+
+bool SimpleMeshMessage::getIsTreebone() const
+{
+    return isTreebone_var;
+}
+
+void SimpleMeshMessage::setIsTreebone(bool isTreebone_var)
+{
+    this->isTreebone_var = isTreebone_var;
+}
+
+int SimpleMeshMessage::getRemainNeighbor() const
+{
+    return remainNeighbor_var;
+}
+
+void SimpleMeshMessage::setRemainNeighbor(int remainNeighbor_var)
+{
+    this->remainNeighbor_var = remainNeighbor_var;
+}
+
+int SimpleMeshMessage::getTreeLevel() const
+{
+    return treeLevel_var;
+}
+
+void SimpleMeshMessage::setTreeLevel(int treeLevel_var)
+{
+    this->treeLevel_var = treeLevel_var;
+}
+
+bool SimpleMeshMessage::getAddAsChild() const
+{
+    return addAsChild_var;
+}
+
+void SimpleMeshMessage::setAddAsChild(bool addAsChild_var)
+{
+    this->addAsChild_var = addAsChild_var;
 }
 
 class SimpleMeshMessageDescriptor : public cClassDescriptor
@@ -148,7 +204,7 @@ const char *SimpleMeshMessageDescriptor::getProperty(const char *propertyname) c
 int SimpleMeshMessageDescriptor::getFieldCount(void *object) const
 {
     cClassDescriptor *basedesc = getBaseClassDescriptor();
-    return basedesc ? 2+basedesc->getFieldCount(object) : 2;
+    return basedesc ? 6+basedesc->getFieldCount(object) : 6;
 }
 
 unsigned int SimpleMeshMessageDescriptor::getFieldTypeFlags(void *object, int field) const
@@ -162,8 +218,12 @@ unsigned int SimpleMeshMessageDescriptor::getFieldTypeFlags(void *object, int fi
     static unsigned int fieldTypeFlags[] = {
         FD_ISEDITABLE,
         FD_ISCOMPOUND,
+        FD_ISEDITABLE,
+        FD_ISEDITABLE,
+        FD_ISEDITABLE,
+        FD_ISEDITABLE,
     };
-    return (field>=0 && field<2) ? fieldTypeFlags[field] : 0;
+    return (field>=0 && field<6) ? fieldTypeFlags[field] : 0;
 }
 
 const char *SimpleMeshMessageDescriptor::getFieldName(void *object, int field) const
@@ -177,8 +237,12 @@ const char *SimpleMeshMessageDescriptor::getFieldName(void *object, int field) c
     static const char *fieldNames[] = {
         "command",
         "srcNode",
+        "isTreebone",
+        "remainNeighbor",
+        "treeLevel",
+        "addAsChild",
     };
-    return (field>=0 && field<2) ? fieldNames[field] : NULL;
+    return (field>=0 && field<6) ? fieldNames[field] : NULL;
 }
 
 int SimpleMeshMessageDescriptor::findField(void *object, const char *fieldName) const
@@ -187,6 +251,10 @@ int SimpleMeshMessageDescriptor::findField(void *object, const char *fieldName) 
     int base = basedesc ? basedesc->getFieldCount(object) : 0;
     if (fieldName[0]=='c' && strcmp(fieldName, "command")==0) return base+0;
     if (fieldName[0]=='s' && strcmp(fieldName, "srcNode")==0) return base+1;
+    if (fieldName[0]=='i' && strcmp(fieldName, "isTreebone")==0) return base+2;
+    if (fieldName[0]=='r' && strcmp(fieldName, "remainNeighbor")==0) return base+3;
+    if (fieldName[0]=='t' && strcmp(fieldName, "treeLevel")==0) return base+4;
+    if (fieldName[0]=='a' && strcmp(fieldName, "addAsChild")==0) return base+5;
     return basedesc ? basedesc->findField(object, fieldName) : -1;
 }
 
@@ -201,8 +269,12 @@ const char *SimpleMeshMessageDescriptor::getFieldTypeString(void *object, int fi
     static const char *fieldTypeStrings[] = {
         "int",
         "TransportAddress",
+        "bool",
+        "int",
+        "int",
+        "bool",
     };
-    return (field>=0 && field<2) ? fieldTypeStrings[field] : NULL;
+    return (field>=0 && field<6) ? fieldTypeStrings[field] : NULL;
 }
 
 const char *SimpleMeshMessageDescriptor::getFieldProperty(void *object, int field, const char *propertyname) const
@@ -247,6 +319,10 @@ std::string SimpleMeshMessageDescriptor::getFieldAsString(void *object, int fiel
     switch (field) {
         case 0: return long2string(pp->getCommand());
         case 1: {std::stringstream out; out << pp->getSrcNode(); return out.str();}
+        case 2: return bool2string(pp->getIsTreebone());
+        case 3: return long2string(pp->getRemainNeighbor());
+        case 4: return long2string(pp->getTreeLevel());
+        case 5: return bool2string(pp->getAddAsChild());
         default: return "";
     }
 }
@@ -262,6 +338,10 @@ bool SimpleMeshMessageDescriptor::setFieldAsString(void *object, int field, int 
     SimpleMeshMessage *pp = (SimpleMeshMessage *)object; (void)pp;
     switch (field) {
         case 0: pp->setCommand(string2long(value)); return true;
+        case 2: pp->setIsTreebone(string2bool(value)); return true;
+        case 3: pp->setRemainNeighbor(string2long(value)); return true;
+        case 4: pp->setTreeLevel(string2long(value)); return true;
+        case 5: pp->setAddAsChild(string2bool(value)); return true;
         default: return false;
     }
 }
@@ -277,8 +357,12 @@ const char *SimpleMeshMessageDescriptor::getFieldStructName(void *object, int fi
     static const char *fieldStructNames[] = {
         NULL,
         "TransportAddress",
+        NULL,
+        NULL,
+        NULL,
+        NULL,
     };
-    return (field>=0 && field<2) ? fieldStructNames[field] : NULL;
+    return (field>=0 && field<6) ? fieldStructNames[field] : NULL;
 }
 
 void *SimpleMeshMessageDescriptor::getFieldStructPointer(void *object, int field, int i) const
