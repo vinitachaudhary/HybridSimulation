@@ -59,13 +59,11 @@ void SimpleMesh::initializeOverlay(int stage)
 		getParentModule()->getParentModule()->setName("CDN-Server");
 	}
 
-	//sessionLength = par("sessionLength");
 	sessionLength = atof(ev.getConfig()->getConfigValue("sim-time-limit"));
 	DenaCastOverlay::initializeOverlay(stage);
 
 	if(adaptiveNeighboring)
 			neighborNum = (int)(upBandwidth/(videoAverageRate*1024));
-	//std::cout<<"upBw : "<<upBandwidth<<" neighbor num : "<<neighborNum<<endl;
 
 	WATCH(neighborNum);
 	WATCH(downBandwidth);
@@ -93,15 +91,21 @@ void SimpleMesh::joinOverlay()
 	trackerAddress  = *globalNodeList->getRandomAliveNode(1);
 	remainNotificationTimer = new cMessage ("remainNotificationTimer");
 	scheduleAt(simTime()+neighborNotificationPeriod,remainNotificationTimer);
+	subscriptionExpiryTimer = new cMessage ("subscriptionExpiryTimer");
+	scheduleAt(simTime()+5,subscriptionExpiryTimer);
 	std::stringstream ttString;
 	ttString << thisNode;
 	getParentModule()->getParentModule()->getDisplayString().setTagArg("tt",0,ttString.str().c_str());
+	lastAliveMsgTime = simTime();
 	if(!isSource)
 	{
 		meshJoinRequestTimer = new cMessage("meshJoinRequestTimer");
 		scheduleAt(simTime(),meshJoinRequestTimer);
 		treebonePromotionCheckTimer = new cMessage ("treebonePromotionCheckTimer");
 		scheduleAt(simTime(),treebonePromotionCheckTimer);
+		resubscriptionTimer = new cMessage("resubscriptionTimer");
+		isolationRecoveryTimer = new cMessage("isolationRecoveryTimer");
+		scheduleAt(simTime()+6,isolationRecoveryTimer);
 	}
 	else
 	{
@@ -164,28 +168,65 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 //		}
 	}
 	else if (msg == treebonePromotionCheckTimer) {
-		if (!LV->isTreebone && isRegistered && !isSource) {
+		if (!LV->isTreebone) {
 			if (simTime() <= 0.1*sessionLength) {
 				//Early Promotion
-				double earlyPromotionProbability = 1/( 0.3* (sessionLength - joinTime) + 1 - (simTime()-joinTime));
+				double earlyPromotionProbability = 1/((double)( 0.3* (sessionLength - joinTime.dbl()) + 1 - (simTime()-joinTime).dbl()));
 				double randomNum = uniform(0,1);
+
+				//std::cout<<"rn : "<<randomNum<<" prob : "<<earlyPromotionProbability<<endl;
 				if (randomNum <= earlyPromotionProbability)
 					LV->isTreebone=true;
 			}
 			else {
-				if (simTime() - joinTime >= 0.3* (sessionLength - joinTime))
+				if (simTime().dbl() - joinTime.dbl() >= 0.3* (sessionLength - joinTime.dbl()))
 					LV->isTreebone = true;
 			}
-			if (LV->isTreebone) {
+			if (LV->isTreebone && isRegistered) {
 				DenaCastTrackerMessage* treebonePromoted = new DenaCastTrackerMessage("treebonePromoted");
 				treebonePromoted->setCommand(TREEBONE_PROMOTION);
 				treebonePromoted->setRemainNeighbor(neighborNum - LV->neighborMap.size());
 				treebonePromoted->setSrcNode(thisNode);
 				sendMessageToUDP(trackerAddress,treebonePromoted);
+				//std::cout<<"Treebone Promotion"<<endl;
 			}
 			else
 				scheduleAt(simTime()+1,treebonePromotionCheckTimer);
 		}
+	}
+	else if (msg == subscriptionExpiryTimer) {
+		std::map <TransportAddress, neighborInfo>::iterator tempIt, nodeIt = LV->PartialView.begin();
+
+		while (nodeIt != LV->PartialView.end()) {
+			if (nodeIt->second.TTL <= simTime().dbl()) {
+				tempIt=nodeIt;
+				++nodeIt;
+				seenForwardedSubs.erase(tempIt->first);
+				LV->PartialView.erase(tempIt);
+			}
+			else {
+				ScampMessage* alive = new ScampMessage("alive");
+				alive->setCommand(ALIVE);
+				alive->setSrcNode(thisNode);
+				alive->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				neighborInfoToMsg(alive, neighborNum-LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+				alive->setTTL(simTime().dbl()+5.0);
+
+				sendMessageToUDP(nodeIt->first,alive);
+				++nodeIt;
+			}
+		}
+		scheduleAt(simTime()+5, subscriptionExpiryTimer);
+	}
+	else if (msg == resubscriptionTimer) {
+		resubscriptionProcess();
+		scheduleAt(simTime()+5, resubscriptionTimer);
+	}
+	else if (msg == isolationRecoveryTimer) {
+		if ((simTime() - lastAliveMsgTime).dbl() >= 6.0) {
+			resubscriptionProcess();
+		}
+		scheduleAt(simTime()+6,isolationRecoveryTimer);
 	}
 	else
 		DenaCastOverlay::handleAppMessage(msg);
@@ -201,9 +242,8 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			joinRequest->setCommand(JOIN_REQUEST);
 			joinRequest->setSrcNode(thisNode);
 			joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-			joinRequest->setRemainNeighbor(neighborNum - LV->neighborMap.size());
-			joinRequest->setTreeLevel(LV->treeLevel);
-			joinRequest->setIsTreebone(LV->isTreebone);
+			neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+
 			int limit = 0;
 			if(trackerMsg->getNeighborsArraySize() < neighborNum - LV->neighborMap.size())
 				limit = trackerMsg->getNeighborsArraySize();
@@ -213,6 +253,36 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 				if(limit-- > 0 && LV->neighborMap.find(trackerMsg->getNeighbors(i)) == LV->neighborMap.end())
 					sendMessageToUDP(trackerMsg->getNeighbors(i),joinRequest->dup());
 			delete joinRequest;
+
+			neighborInfo nF(0, simTime().dbl(), true, -1);
+
+			ScampMessage* newSubscription = new ScampMessage("newSubscription");
+			newSubscription->setCommand(NEW_SUBSCRIPTION);
+			newSubscription->setSrcNode(thisNode);
+			newSubscription->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+			newSubscription->setToForward(false);
+			neighborInfoToMsg(newSubscription, neighborNum, false, -1);
+			newSubscription->setTTL(simTime().dbl()+5.0);
+
+			for (unsigned int i=0; i<trackerMsg->getNeighborsArraySize(); i++) {
+
+				if (i<trackerMsg->getTreeNeighborSize())
+					nF.isTreebone = true;
+				else
+					nF.isTreebone = false;
+
+				LV->InView.insert(std::make_pair<TransportAddress, neighborInfo> (trackerMsg->getNeighbors(i),nF));
+				if (i == trackerMsg->getNeighborsArraySize()-1) {
+					newSubscription->setToForward(true);
+					nF.TTL = simTime().dbl() + 5.0;
+					LV->PartialView.insert(std::make_pair<TransportAddress, neighborInfo> (trackerMsg->getNeighbors(i),nF));
+				}
+
+				sendMessageToUDP(trackerMsg->getNeighbors(i),newSubscription->dup());
+			}
+			delete newSubscription;
+			cancelEvent(resubscriptionTimer);		// todo : to be removed/changed later
+			scheduleAt(simTime()+5,resubscriptionTimer);
 		}
 		delete trackerMsg;
 	}
@@ -224,20 +294,15 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			if(LV->neighborMap.size() < neighborNum)
 			{
 				//LV->neighbors.push_back(simpleMeshmsg->getSrcNode());
-				neighborInfo nF;
-				nF.isTreebone = simpleMeshmsg->getIsTreebone();
-				nF.remainedNeighbor = simpleMeshmsg->getRemainNeighbor();
-				nF.timeOut = simTime().dbl();
-				nF.treeLevel = simpleMeshmsg->getTreeLevel();
+				neighborInfo nF(simpleMeshmsg->getRemainNeighbor(), simTime().dbl(),
+						simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel());
 				LV->neighborMap.insert(std::make_pair<TransportAddress, neighborInfo> (simpleMeshmsg->getSrcNode(),nF));
 
 				SimpleMeshMessage* joinResponse = new SimpleMeshMessage("joinResponse");
 				joinResponse->setCommand(JOIN_RESPONSE);
 				joinResponse->setSrcNode(thisNode);
 				joinResponse->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-				joinResponse->setRemainNeighbor(neighborNum - LV->neighborMap.size());
-				joinResponse->setTreeLevel(LV->treeLevel);
-				joinResponse->setIsTreebone(LV->isTreebone);
+				neighborInfoToMsg(joinResponse, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
 				sendMessageToUDP(simpleMeshmsg->getSrcNode(),joinResponse);
 
 				stat_joinRSP += 1;
@@ -260,11 +325,8 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			if(LV->neighborMap.size() < neighborNum )
 			{
 				//LV->neighbors.push_back(simpleMeshmsg->getSrcNode());
-				neighborInfo nF;
-				nF.isTreebone = simpleMeshmsg->getIsTreebone();
-				nF.remainedNeighbor = simpleMeshmsg->getRemainNeighbor();
-				nF.timeOut = simTime().dbl();
-				nF.treeLevel = simpleMeshmsg->getTreeLevel();
+				neighborInfo nF(simpleMeshmsg->getRemainNeighbor(), simTime().dbl(),
+								simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel());
 				LV->neighborMap.insert(std::make_pair<TransportAddress, neighborInfo> (simpleMeshmsg->getSrcNode(),nF));
 
 				if(!isRegistered)
@@ -288,12 +350,8 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
 														 "m=m,50,0,50,0;ls=green,1");
 
-				joinAck->setRemainNeighbor(neighborNum - LV->neighborMap.size());
-				joinAck->setTreeLevel(LV->treeLevel);
-				joinAck->setIsTreebone(LV->isTreebone);
+				neighborInfoToMsg(joinAck, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
 				sendMessageToUDP(simpleMeshmsg->getSrcNode(),joinAck);
-
-				//std::cout<<"treeLevel : "<<LV->treeLevel<<endl;
 
 				stat_joinACK += 1;
 				stat_joinACKBytesSent += joinAck->getByteLength();
@@ -364,6 +422,109 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 		}
 		delete simpleMeshmsg;
 	}
+
+	else if (dynamic_cast<ScampMessage*>(msg) != NULL)
+	{
+		ScampMessage* scampMsg = check_and_cast<ScampMessage*>(msg);
+
+		if (scampMsg->getCommand() == NEW_SUBSCRIPTION) {
+			neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
+							scampMsg->getIsTreebone(), scampMsg->getTreeLevel(), scampMsg->getTTL());
+			LV->PartialView[scampMsg->getSrcNode()] = nF;
+
+			if (scampMsg->getToForward()) {
+				LV->InView[scampMsg->getSrcNode()] = nF;
+
+				ScampMessage* forwardSubscription = new ScampMessage("forwardSubscription");
+				forwardSubscription->setCommand(FORWARD_SUBSCRIPTION);
+				forwardSubscription->setSrcNode(thisNode);
+				forwardSubscription->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				forwardSubscription->setNodeToBeSubscribed(scampMsg->getSrcNode());
+				neighborInfoToMsg(forwardSubscription, scampMsg->getRemainNeighbor(),
+						scampMsg->getIsTreebone(), scampMsg->getTreeLevel());
+				forwardSubscription->setTTL(scampMsg->getTTL());
+
+				std::map <TransportAddress, neighborInfo>::iterator nodeIt;
+
+				for (nodeIt = LV->PartialView.begin(); nodeIt != LV->PartialView.end(); ++nodeIt)
+					sendMessageToUDP(nodeIt->first, forwardSubscription->dup());
+
+				delete forwardSubscription;
+			}
+		}
+
+		else if (scampMsg->getCommand() == FORWARD_SUBSCRIPTION && scampMsg->getNodeToBeSubscribed() != thisNode) {
+			std::map<TransportAddress, int>::iterator nodeIter;
+			nodeIter = seenForwardedSubs.find(scampMsg->getNodeToBeSubscribed());
+
+			if (nodeIter == seenForwardedSubs.end())
+				seenForwardedSubs.insert(std::make_pair<TransportAddress, int> (scampMsg->getNodeToBeSubscribed(),1));
+			else
+				nodeIter->second++;
+
+			if (nodeIter->second < 10 && LV->PartialView.find(scampMsg->getNodeToBeSubscribed()) == LV->PartialView.end()) {
+				double randomNumDbl = uniform(0,1);
+				double keepProbablility = 1/((double)(1+LV->PartialView.size()));
+
+				if (randomNumDbl <= keepProbablility) {
+					neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
+									scampMsg->getIsTreebone(), scampMsg->getTreeLevel(), scampMsg->getTTL());
+					LV->PartialView[scampMsg->getNodeToBeSubscribed()]=nF;
+
+					ScampMessage* subscriptionAck = new ScampMessage("subscriptionAck");
+					subscriptionAck->setCommand(SUBSCRIPTION_ACK);
+					subscriptionAck->setSrcNode(thisNode);
+					subscriptionAck->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+					neighborInfoToMsg(subscriptionAck, neighborNum - LV->neighborMap.size(),
+										LV->isTreebone, LV->treeLevel);
+					sendMessageToUDP(scampMsg->getNodeToBeSubscribed(), subscriptionAck);
+				}
+				else if (LV->PartialView.size() > 0) {
+					std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->PartialView.begin();
+					int randomNum = intuniform(1,LV->PartialView.size());
+					for(int i=1; i<randomNum ; i++)
+						++nodeIt;
+
+					scampMsg->setSrcNode(thisNode);
+
+					sendMessageToUDP(nodeIt->first, scampMsg->dup());
+				}
+			}
+		}
+
+		else if (scampMsg->getCommand() == SUBSCRIPTION_ACK) {
+			neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
+							scampMsg->getIsTreebone(), scampMsg->getTreeLevel());
+			LV->InView[scampMsg->getSrcNode()]=nF;
+		}
+
+		else if (scampMsg->getCommand() == ALIVE) {
+			neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
+							scampMsg->getIsTreebone(), scampMsg->getTreeLevel());
+			LV->InView[scampMsg->getSrcNode()]=nF;
+
+			lastAliveMsgTime = simTime();
+		}
+		else if (scampMsg->getCommand() == UNSUBSCRIBE) {
+			LV->PartialView.erase(scampMsg->getSrcNode());
+			seenForwardedSubs.erase(scampMsg->getSrcNode());
+
+			if (scampMsg->getNodeToBeSubscribed() != scampMsg->getSrcNode()) {
+				neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
+								scampMsg->getIsTreebone(), scampMsg->getTreeLevel(), scampMsg->getTTL());
+				LV->PartialView[scampMsg->getNodeToBeSubscribed()]=nF;
+
+				ScampMessage* subscriptionAck = new ScampMessage("subscriptionAck");
+				subscriptionAck->setCommand(SUBSCRIPTION_ACK);
+				subscriptionAck->setSrcNode(thisNode);
+				subscriptionAck->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				neighborInfoToMsg(subscriptionAck, neighborNum - LV->neighborMap.size(),
+									LV->isTreebone, LV->treeLevel);
+				sendMessageToUDP(scampMsg->getNodeToBeSubscribed(), subscriptionAck);
+			}
+		}
+		delete scampMsg;
+	}
 	else
 		DenaCastOverlay::handleUDPMessage(msg);
 }
@@ -372,6 +533,35 @@ void SimpleMesh::handleNodeGracefulLeaveNotification()
 	neighborNum = 0;
 	selfUnRegister();
 	std::cout << "time: " << simTime()<< "  "<<getParentModule()->getParentModule()->getFullName() <<  std::endl;
+
+	std::map <TransportAddress, neighborInfo>::iterator inViewIt, partialViewIt;
+	partialViewIt = LV->PartialView.begin();
+
+	ScampMessage* unsubscribe = new ScampMessage("unsubscribe");
+	unsubscribe->setCommand(UNSUBSCRIBE);
+	unsubscribe->setSrcNode(thisNode);
+	unsubscribe->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+
+	if (LV->PartialView.size() > 0) {
+		for (inViewIt = LV->InView.begin(); inViewIt != LV->InView.end(); ++inViewIt, ++partialViewIt) {
+			if (partialViewIt == LV->PartialView.end())
+				partialViewIt = LV->PartialView.begin();
+			unsubscribe->setNodeToBeSubscribed(partialViewIt->first);
+			neighborInfoToMsg(unsubscribe, partialViewIt->second.remainedNeighbor,
+					partialViewIt->second.isTreebone, partialViewIt->second.treeLevel);
+			unsubscribe->setTTL(partialViewIt->second.TTL);
+
+			sendMessageToUDP(inViewIt->first, unsubscribe->dup());
+		}
+	}
+	else {
+		unsubscribe->setNodeToBeSubscribed(thisNode);		// for invalid
+		for (inViewIt = LV->InView.begin(); inViewIt != LV->InView.end(); ++inViewIt) {
+			sendMessageToUDP(inViewIt->first, unsubscribe->dup());
+		}
+	}
+
+	delete unsubscribe;
 
 	SimpleMeshMessage* disconnectMsg = new SimpleMeshMessage("disconnect");
 	disconnectMsg->setCommand(DISCONNECT);
@@ -468,12 +658,46 @@ void SimpleMesh::disconnectProcess(TransportAddress Node)
 	videoMsg->setSrcNode(Node);
 	send(videoMsg,"appOut");
 }
+
+void SimpleMesh::neighborInfoToMsg (SimpleMeshMessage* msg, int _remainedNeighbor, bool _isTreebone, int _treeLevel) {
+	msg->setRemainNeighbor(_remainedNeighbor);
+	msg->setIsTreebone(_isTreebone);
+	msg->setTreeLevel(_treeLevel);
+}
+
+void SimpleMesh::neighborInfoToMsg (ScampMessage* msg, int _remainedNeighbor, bool _isTreebone, int _treeLevel) {
+	msg->setRemainNeighbor(_remainedNeighbor);
+	msg->setIsTreebone(_isTreebone);
+	msg->setTreeLevel(_treeLevel);
+}
+
+void SimpleMesh::resubscriptionProcess() {
+	if (LV->PartialView.size() > 0 ) {
+		std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->PartialView.begin();
+		int randomNum = intuniform(1,LV->PartialView.size());
+		for(int i=1; i<randomNum ; i++)
+			++nodeIt;
+
+		ScampMessage* newSubscription = new ScampMessage("newSubscription");
+		newSubscription->setCommand(NEW_SUBSCRIPTION);
+		newSubscription->setSrcNode(thisNode);
+		newSubscription->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+		newSubscription->setToForward(true);
+		neighborInfoToMsg(newSubscription, neighborNum-LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+		newSubscription->setTTL(simTime().dbl()+5.0);
+
+		sendMessageToUDP(nodeIt->first,newSubscription);
+	}
+}
+
 void SimpleMesh::finishOverlay()
 {
+	cancelAndDelete(subscriptionExpiryTimer);
 	if(!isSource) {
     	cancelAndDelete(meshJoinRequestTimer);
-    	if (!LV->isTreebone)
-    		cancelAndDelete(treebonePromotionCheckTimer);
+    	cancelAndDelete(treebonePromotionCheckTimer);
+    	cancelAndDelete(resubscriptionTimer);
+    	cancelAndDelete(isolationRecoveryTimer);
 	}
 	else
 		cancelAndDelete(serverNeighborTimer);

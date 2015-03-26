@@ -53,8 +53,11 @@ protected:
 
     int sessionLength;		// Session length of simulation
     simtime_t joinTime;		// time when node joined the overlay - for measurement of node's age
+    simtime_t lastAliveMsgTime; 	// time when last alive message was received
 
-    //std::map <TransportAddress, neighborInfo>::iterator neighborIt;
+    // maps the nodes to the number of times their forwarded subscription is seen by this node
+    std::map<TransportAddress, int> seenForwardedSubs;
+
     /**
      * Register node in the tracker
      */
@@ -69,11 +72,26 @@ protected:
      */
     void disconnectProcess(TransportAddress node);
 
+	/*
+	 * Helper function to avoid redundancy of set values of SimpleMeshMessage
+	 */
+    void neighborInfoToMsg (SimpleMeshMessage* msg, int _remainedNeighbor, bool _isTreebone, int _treeLevel);
+
+    /*
+	 * Helper function to avoid redundancy of set values of ScampMessage
+	 */
+	void neighborInfoToMsg (ScampMessage* msg, int _remainedNeighbor, bool _isTreebone, int _treeLevel);
+
+	void resubscriptionProcess();		// Procedure for a node to resubscribe to a random node in PartialView
+
     //selfMessages
     cMessage* meshJoinRequestTimer; /**< self message for scheduling neighboring*/
     cMessage* remainNotificationTimer; /**< self message for scheduling send notification to server*/
     cMessage* serverNeighborTimer; /**< for gradual neighboring this self message plan for this job */
     cMessage* treebonePromotionCheckTimer;	// timer to check if the node can be promoted to treebone
+    cMessage* subscriptionExpiryTimer; 		// timer to remove expired subscription from Partial View
+    cMessage* resubscriptionTimer;			// timer to resubscribe
+    cMessage* isolationRecoveryTimer;		// timer to check if node has been isolated from group
 
 
     // statistics

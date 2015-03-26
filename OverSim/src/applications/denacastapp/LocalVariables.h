@@ -38,6 +38,14 @@ struct neighborInfo
 	double timeOut;             /**< Time out for neighbor notification*/
 	bool isTreebone;			// true if the node is in treebone
 	int treeLevel;				// node depth in the tree - source at level 0
+	double TTL;					// time to live for subscription message
+
+	neighborInfo() {};
+	neighborInfo(int _remainedNeighbor, double _timeOut, bool _isTreebone, int _treeLevel) :
+		remainedNeighbor(_remainedNeighbor), timeOut(_timeOut), isTreebone(_isTreebone), treeLevel(_treeLevel) {};
+	neighborInfo(int _remainedNeighbor, double _timeOut, bool _isTreebone, int _treeLevel, double _ttl) :
+			remainedNeighbor(_remainedNeighbor), timeOut(_timeOut), isTreebone(_isTreebone), treeLevel(_treeLevel), TTL(_ttl) {};
+
 };
 
 class LocalVariables: public cSimpleModule
@@ -95,13 +103,16 @@ public:
 
     VideoBuffer* videoBuffer; /**<Create new buffer for existing host to keep latest Chunks */
     BufferMap* hostBufferMap; /**<Create our own Buffer map to announce other neighbors */
-    std::vector <TransportAddress> neighbors;
+    //std::vector <TransportAddress> neighbors;
     std::map <TransportAddress, neighborInfo> neighborMap;	/**< Map from node's neighbors' TransportAddresses to their information*/
     bool isTreebone;					// true if node member of treebone
     bool hasTreeboneParent;				// true if node has a treebone parent
     TransportAddress treeboneParent;	// TransportAddress of treebone parent
     std::vector <TransportAddress> treeboneChildren;	// Vector of transportAddress of treebone children
     int treeLevel;			// node depth in tree, -1 for invalid
+
+    std::map <TransportAddress, neighborInfo> PartialView;		// for SCAMP protocol - partial list of nodes to which this node sends gossip messages to
+    std::map <TransportAddress, neighborInfo> InView;			// for SCAMP protocol - list of nodes from which this node receives gossip messages from
 
 protected:
     int windowOfIntrest; /**< size of window of interest in second*/
