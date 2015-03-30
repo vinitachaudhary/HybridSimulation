@@ -72,6 +72,7 @@ packet VideoMessage
 	double deadLine;			// deadline of chunk
 	Chunk chunk;			// Chunk object
 	VideoFrame VFrame;		// VideoFrame object
+	bool isPushed;			// If the chunk is being pushed over treebone
 }
 //
 // BufferMap exchange packet for exchange to neighbors (pull-based)

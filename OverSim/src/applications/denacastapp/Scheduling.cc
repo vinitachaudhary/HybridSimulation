@@ -105,6 +105,8 @@ void DenaCastApp::recieverSideScheduling2()
 	std::multimap <int,chunkPopulation> requestingWindow;
 	int nextChunk = getNextChunk();
 
+	//std::cout<<"NextChunk Requested : "<<nextChunk<<endl;
+
 	while(notInNeighbors.size() - requestingWindow.size() < 4)
 	{
 		chunkPopulation cP;
@@ -221,6 +223,7 @@ int DenaCastApp::requestRateState()
 void DenaCastApp::senderSideScheduling1()
 {
 	handleChunkRequest(senderqueue.begin()->second.tAddress,senderqueue.begin()->second.chunkNo,false);
+	countRequest(senderqueue.begin()->second.tAddress);
 	senderqueue.erase(senderqueue.begin());
 }
 void DenaCastApp::senderSideScheduling2()
@@ -232,6 +235,7 @@ void DenaCastApp::senderSideScheduling2()
 		if(senderqueue.size() != 0)
 		{
 			handleChunkRequest(senderqueue.begin()->second.tAddress,senderqueue.begin()->second.chunkNo,false);
+			countRequest(senderqueue.begin()->second.tAddress);
 			Chunk CH = LV->videoBuffer->getChunk(senderqueue.begin()->second.chunkNo);
 			scheduleAt(simTime() + 8*(CH.getChunkByteLength()+29)/LV->getUpBandwidth(),sendFrameTimer);
 			senderqueue.erase(senderqueue.begin());
@@ -277,7 +281,7 @@ void DenaCastApp::handleChunkRequest(TransportAddress& SrcNode,int chunkNo, bool
 {
 	VideoMessage *chunkRsp = new VideoMessage("Chunk_Rsp");
 	chunkRsp->setDstNode(SrcNode);
-	countRequest(SrcNode);
+	//countRequest(SrcNode);		shifted outside function
 	if(LV->hostBufferMap->findChunk(chunkNo))
 	{
 		Chunk CH = LV->videoBuffer->getChunk(chunkNo);
@@ -285,6 +289,7 @@ void DenaCastApp::handleChunkRequest(TransportAddress& SrcNode,int chunkNo, bool
 			CH.setHopCout(0);
 		chunkRsp->setCommand(CHUNK_RSP);
 		chunkRsp->setChunk(CH);
+		chunkRsp->setIsPushed(push);
 
 		chunkRsp->setByteLength(CH.getChunkByteLength()+ VIDEOMESSAGE_L(msg)/8);
 		send(chunkRsp,"to_lowerTier");

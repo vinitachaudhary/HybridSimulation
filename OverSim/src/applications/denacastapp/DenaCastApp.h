@@ -23,6 +23,8 @@
  * @author Behnam Ahmadifar, Yasser Seyyedi
  */
 
+// edited by vinita
+
 #ifndef DENACASTAPP_H_
 #define DENACASTAPP_H_
 #include "BufferMap.h"
@@ -107,6 +109,10 @@ protected:
     double averageChunkLength; /**< average of one chunk length*/
     bool schedulingSatisfaction; /**< true if condition is OK for start scheduling*/
 
+	bool meshPullActive;			// true if chunks are to be requested by mesh pull
+	int lastSentChunk;				// chunk number of the chunk last sent by this node to its children
+	int lastReceivedChunk;	 		// chunk number of the chunk last received by the node from its parent
+
 
     std::vector <nodeBufferMap> neighborsBufferMaps;
 
@@ -117,6 +123,8 @@ protected:
 	cMessage* requestChunkTimer; /**< time message to request chunk(s) from neighbors */
 	cMessage* sendFrameTimer; /**< timer that is used in order to call sender side scheduling */
 	cMessage* playingTimer; /**< timer in which send self message in 1/fps to send buffered frames to the player */
+
+	cMessage* meshPullTimer;	// timer to check and pull missing chunks between playback point and lastReceivedChunk
 
 	BaseCamera* bc; /**< a pointer to base camera*/
 	LocalVariables* LV; /** < a pointer to LocalVariables module*/

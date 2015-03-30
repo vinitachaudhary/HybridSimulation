@@ -68,12 +68,17 @@ void DenaCastApp::initializeApp(int stage)
     playingState = BUFFERING;
     bufferMapExchangeStart = false;
     schedulingSatisfaction = false;
+    lastSentChunk = 0;
+    lastReceivedChunk = 0;
+    meshPullActive = true;
 
 	//initialize self messages
 	bufferMapTimer = new cMessage("bufferMapTimer");
 	requestChunkTimer = new cMessage("requestChunkTimer");
 	playingTimer = new cMessage("playingTimer");
 	sendFrameTimer = new cMessage("sendFrameTimer");
+	meshPullTimer = new cMessage("meshPullTimer");
+
 	if(!isVideoServer)
 		bc = check_and_cast<BaseCamera*>(simulation.getModuleByPath("CDN-Server[1].tier2.mpeg4camera"));
 
@@ -121,6 +126,27 @@ void DenaCastApp::handleTimerEvent(cMessage* msg)
 		scheduleAt(simTime()+1/(double)Fps,playingTimer);
 
 	}
+	else if (msg == meshPullTimer) {
+		if (meshPullActive || !LV->hasTreeboneParent || lastReceivedChunk*chunkSize < playbackPoint) {
+			meshPullActive = true;
+			// todo : inform overlay to look for treebone parent
+			selectRecieverSideScheduling();
+		}
+		else {
+			// check for loss between playback point and lastReceivedChunk
+			int inCompleteChunks = 0;
+			int playbackIndex = playbackPoint/chunkSize - LV->hostBufferMap->chunkNumbers[0];
+			int lastReceivedChunkIndex = lastReceivedChunk - LV->hostBufferMap->chunkNumbers[0];
+			if (playbackIndex >= 0 && playbackIndex < bufferSize && lastReceivedChunkIndex >= 0 && lastReceivedChunkIndex < bufferSize) {
+				for (int i=playbackIndex; i<lastReceivedChunkIndex; i++)
+					if (!LV->hostBufferMap->buffermap[i])
+						inCompleteChunks++;
+				if (inCompleteChunks > 10)
+					selectRecieverSideScheduling();
+			}
+		}
+		scheduleAt(simTime()+10/(double)Fps,meshPullTimer);
+	}
 	else
 		delete msg;
 
@@ -141,26 +167,31 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 		}
 		else if(VideoMsg->getCommand() == CHUNK_RSP && !isVideoServer)
 		{
-//			if(!bufferMapExchangeStart)
-//			{
-//				scheduleAt(simTime(),requestChunkTimer);
-//				scheduleAt(simTime(),playingTimer);
-//				scheduleAt(simTime()+bufferMapExchangePeriod+uniform(0,0.25),bufferMapTimer);
-//				stat_startBufferMapExchange = simTime().dbl() + bufferMapExchangePeriod;
-//				stat_startBuffering = simTime().dbl();
-//				bufferMapExchangeStart=true;
-//				int shiftnum = 0;
-//				if(VideoMsg->getChunk().getChunkNumber() > 0)
-//					shiftnum = VideoMsg->getChunk().getChunkNumber();
-//				shiftnum++;
-//				for(int i=0 ; i<shiftnum ; i++)
-//					videoBuffer->shiftChunkBuf();
-//
-//				//needed for push
-//			}
+			if(!bufferMapExchangeStart)
+			{
+				scheduleAt(simTime(),requestChunkTimer);
+				scheduleAt(simTime(),playingTimer);
+				scheduleAt(simTime()+bufferMapExchangePeriod+uniform(0,0.25),bufferMapTimer);
+				stat_startBufferMapExchange = simTime().dbl() + bufferMapExchangePeriod;
+				stat_startBuffering = simTime().dbl();
+				bufferMapExchangeStart=true;
+				int shiftnum = 0;
+				if(VideoMsg->getChunk().getChunkNumber() > 0)
+					shiftnum = VideoMsg->getChunk().getChunkNumber();
+				shiftnum-=2;
+				for(int i=0 ; i<shiftnum ; i++)
+					LV->videoBuffer->shiftChunkBuf();
+				LV->updateLocalBufferMap();
+
+				//needed for push
+			}
 			bool redundantState = false;
 			if(VideoMsg->getChunk().isComplete() && !VideoMsg->hasBitError())
 			{
+				int shiftnum = VideoMsg->getChunk().getChunkNumber() - LV->videoBuffer->chunkBuffer[bufferSize-1].getChunkNumber();
+				for(int i=0 ; i<shiftnum ; i++)
+					LV->videoBuffer->shiftChunkBuf();
+
 				if(LV->videoBuffer->getChunk(VideoMsg->getChunk().getChunkNumber()).isComplete())
 				{
 					stat_RedundentSize += VideoMsg->getChunk().getChunkByteLength();
@@ -171,6 +202,14 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				InputChunk.setHopCout(InputChunk.getHopCount()+1);
 				LV->videoBuffer->setChunk(InputChunk);
 				LV->updateLocalBufferMap();
+
+				if (VideoMsg->getIsPushed()) {
+					lastReceivedChunk = InputChunk.getChunkNumber();
+					meshPullActive = false;
+				}
+				else
+					deleteElement(VideoMsg->getChunk().getChunkNumber(),sendFrames);
+
 				if(isMeasuring(VideoMsg->getChunk().getLastFrameNo()))
 				{
 					globalStatistics->addStdDev("DenaCastApp: end to end delay", simTime().dbl() - VideoMsg->getChunk().getCreationTime());
@@ -178,12 +217,21 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 					if(VideoMsg->getChunk().getLastFrameNo() < playbackPoint)
 						LV->addToLateArivalLoss(VideoMsg->getChunk().getLateArrivalLossSize(playbackPoint));
 				}
-				deleteElement(VideoMsg->getChunk().getChunkNumber(),sendFrames);
+
+				if (!redundantState) {
+					for (unsigned int i=0; i < LV->treeboneChildren.size(); i++) {
+						handleChunkRequest(LV->treeboneChildren[i],LV->videoBuffer->lastSetChunk,true);
+						lastSentChunk = LV->videoBuffer->lastSetChunk;
+					}
+				}
 			}
 			delete msg;
 		}
-		else if(VideoMsg->getCommand() == NEIGHBOR_LEAVE)
+		else if(VideoMsg->getCommand() == NEIGHBOR_LEAVE) {
 			deleteNeighbor(VideoMsg->getSrcNode());
+			if (VideoMsg->getSrcNode() == LV->treeboneParent)
+				meshPullActive = true;
+		}
 		else if(VideoMsg->getCommand() == LEAVING)
 		{
 			playingState = STOP;
@@ -200,24 +248,29 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				scheduleAt(simTime(),requestChunkTimer);
 				scheduleAt(simTime(),playingTimer);
 				scheduleAt(simTime()+bufferMapExchangePeriod,bufferMapTimer);
+				scheduleAt(simTime(), meshPullTimer);
 				stat_startBufferMapExchange = simTime().dbl() + bufferMapExchangePeriod;
 				stat_startBuffering = simTime().dbl();
 				bufferMapExchangeStart = true;
-				int shiftnum = 0;
-				if(BufferMap_Recieved->getBuffermap().getLastSetChunk() > 0)
-					shiftnum = BufferMap_Recieved->getBuffermap().getLastSetChunk();
-				if(shiftnum%gopSize > 0 && chunkSize%gopSize !=0)
-					shiftnum += gopSize - (shiftnum%gopSize);
-				else
-					shiftnum -= 2;
-				for(int i=0 ; i<shiftnum ; i++)
-					LV->videoBuffer->shiftChunkBuf();
+				if (LV->hasTreeboneParent)
+					meshPullActive = false;
+				if (meshPullActive) {
+					int shiftnum = 0;
+					if(BufferMap_Recieved->getBuffermap().getLastSetChunk() > 0)
+						shiftnum = BufferMap_Recieved->getBuffermap().getLastSetChunk();
+					if(shiftnum%gopSize > 0 && chunkSize%gopSize !=0)
+						shiftnum += gopSize - (shiftnum%gopSize);
+					else
+						shiftnum -= 2;
+					for(int i=0 ; i<shiftnum ; i++)
+						LV->videoBuffer->shiftChunkBuf();
+				}
 				LV->updateLocalBufferMap();
 		}
 		notInNeighbors.clear();
 		updateNeighborBMList(BufferMap_Recieved);
 
-		if(schedulingSatisfaction)
+		if(schedulingSatisfaction && meshPullActive)
 			selectRecieverSideScheduling();
 		delete msg;
 	}
@@ -239,11 +292,28 @@ void DenaCastApp::handleUpperMessage(cMessage* msg)
 			LV->videoBuffer->setFrame(VideoMsg->getVFrame());
 			LV->updateLocalBufferMap();
 			delete msg;
+			/*if (isVideoServer)
+				std::cout<<"Frame num : "<<VideoMsg->getVFrame().getFrameNumber()<<" Last Set Chunk : "<<LV->videoBuffer->lastSetChunk<<" Last set Frame : "<<LV->videoBuffer->lastSetFrame<<endl;
+			*/
+
+			/*if (LV->hostBufferMap->findChunk(lastSentChunk+1)) {
+				lastSentChunk++;
+				for (unsigned int i=0; i < LV->treeboneChildren.size(); i++) {
+					handleChunkRequest(LV->treeboneChildren[i],lastSentChunk,true);
+				}
+			}*/
+			if (lastSentChunk != LV->videoBuffer->lastSetChunk) {
+				for (unsigned int i=0; i < LV->treeboneChildren.size(); i++) {
+					handleChunkRequest(LV->treeboneChildren[i],LV->videoBuffer->lastSetChunk,true);
+				}
+				lastSentChunk = LV->videoBuffer->lastSetChunk;
+			}
 		}
 	}
 	else
 		delete msg;
 }
+
 void DenaCastApp::updateNeighborBMList(BufferMapMessage* BufferMap_Recieved)
 {
 	bool find = false;
@@ -296,6 +366,8 @@ void DenaCastApp::checkForPlaying()
 }
 void DenaCastApp::sendFrameToPlayer()
 {
+	//std::cout<<"Client Playback point : "<<playbackPoint<<endl;
+
 	VideoFrame vf = LV->videoBuffer->getFrame(playbackPoint);
 	vf.setFrameNumber(playbackPoint);
 	VideoMessage* playermessage = new VideoMessage("PlayerMessage");
@@ -411,6 +483,7 @@ void DenaCastApp::finishApp()
 	cancelAndDelete(requestChunkTimer);
 	cancelAndDelete(playingTimer);
 	cancelAndDelete(sendFrameTimer);
+	cancelAndDelete(meshPullTimer);
 	//statistics
 	if(stat_startupDelay != 0)
 	{
