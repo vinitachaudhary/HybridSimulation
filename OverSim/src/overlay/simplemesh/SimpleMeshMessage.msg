@@ -43,6 +43,7 @@ enum SIMPLEMESHCommand
     JOIN_DENY = 3;    // JOIN_DENY-Message
     DISCONNECT = 4;    // DISCONNECT-Message
     ALIVE = 5;
+    ALIVE_SCAMP = 6;
     NEW_SUBSCRIPTION = 7;
     FORWARD_SUBSCRIPTION = 8;
     SUBSCRIPTION_ACK = 9;

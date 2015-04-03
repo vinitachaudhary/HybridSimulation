@@ -172,6 +172,7 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				scheduleAt(simTime(),requestChunkTimer);
 				scheduleAt(simTime(),playingTimer);
 				scheduleAt(simTime()+bufferMapExchangePeriod+uniform(0,0.25),bufferMapTimer);
+				//scheduleAt(simTime(), neighborTimeoutTimer);
 				stat_startBufferMapExchange = simTime().dbl() + bufferMapExchangePeriod;
 				stat_startBuffering = simTime().dbl();
 				bufferMapExchangeStart=true;
@@ -229,13 +230,15 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 		}
 		else if(VideoMsg->getCommand() == NEIGHBOR_LEAVE) {
 			deleteNeighbor(VideoMsg->getSrcNode());
-			if (VideoMsg->getSrcNode() == LV->treeboneParent)
+			if (LV->hasTreeboneParent && VideoMsg->getSrcNode() == LV->treeboneParent)
 				meshPullActive = true;
+			delete VideoMsg;
 		}
 		else if(VideoMsg->getCommand() == LEAVING)
 		{
 			playingState = STOP;
 			schedulingSatisfaction = false;
+			delete VideoMsg;
 		}
 		else
 			delete VideoMsg;
@@ -249,6 +252,7 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				scheduleAt(simTime(),playingTimer);
 				scheduleAt(simTime()+bufferMapExchangePeriod,bufferMapTimer);
 				scheduleAt(simTime(), meshPullTimer);
+				//scheduleAt(simTime(), neighborTimeoutTimer);
 				stat_startBufferMapExchange = simTime().dbl() + bufferMapExchangePeriod;
 				stat_startBuffering = simTime().dbl();
 				bufferMapExchangeStart = true;
@@ -322,6 +326,7 @@ void DenaCastApp::updateNeighborBMList(BufferMapMessage* BufferMap_Recieved)
 		{
 			neighborsBufferMaps[i].buffermap = BufferMap_Recieved->getBuffermap();
 			neighborsBufferMaps[i].totalBandwidth = BufferMap_Recieved->getTotalBandwidth();
+			//neighborsBufferMaps[i].timeout = simTime().dbl();
 			find = true;
 			break;
 		}
@@ -333,6 +338,7 @@ void DenaCastApp::updateNeighborBMList(BufferMapMessage* BufferMap_Recieved)
 		neighbourBM.totalBandwidth =  BufferMap_Recieved->getTotalBandwidth();
 		neighbourBM.requestCounter = 0;
 		neighbourBM.buffermap = BufferMap_Recieved->getBuffermap();
+		//neighbourBM.timeout = simTime().dbl();
 		neighborsBufferMaps.push_back(neighbourBM);
 	}
 }

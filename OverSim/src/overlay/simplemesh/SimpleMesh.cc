@@ -93,6 +93,12 @@ void SimpleMesh::joinOverlay()
 	scheduleAt(simTime()+neighborNotificationPeriod,remainNotificationTimer);
 	subscriptionExpiryTimer = new cMessage ("subscriptionExpiryTimer");
 	scheduleAt(simTime()+5,subscriptionExpiryTimer);
+
+	aliveNotificationTimer = new cMessage ("aliveNotificationTimer");
+	scheduleAt(simTime()+2,aliveNotificationTimer);
+	checkNeighborTimeout = new cMessage ("checkNeighborTimeout");
+	scheduleAt(simTime()+3,checkNeighborTimeout);
+
 	std::stringstream ttString;
 	ttString << thisNode;
 	getParentModule()->getParentModule()->getDisplayString().setTagArg("tt",0,ttString.str().c_str());
@@ -106,6 +112,8 @@ void SimpleMesh::joinOverlay()
 		resubscriptionTimer = new cMessage("resubscriptionTimer");
 		isolationRecoveryTimer = new cMessage("isolationRecoveryTimer");
 		scheduleAt(simTime()+6,isolationRecoveryTimer);
+		parentRequestTimer = new cMessage("parentRequestTimer");
+		scheduleAt(simTime()+2, parentRequestTimer);
 	}
 	else
 	{
@@ -123,19 +131,54 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 {
 	if(msg == meshJoinRequestTimer)
 	{
-		if(LV->neighborMap.size() == 0)
+		if(LV->neighborMap.size() < neighborNum)
 		{
-			DenaCastTrackerMessage* NeighborReq = new DenaCastTrackerMessage("NeighborReq");
-			NeighborReq->setCommand(NEIGHBOR_REQUEST);
-			NeighborReq->setNeighborSize(neighborNum - LV->neighborMap.size());
-			NeighborReq->setSrcNode(thisNode);
-			NeighborReq->setIsServer(false);
+			if (LV->PartialView.size() > 0) {
+				SimpleMeshMessage* joinRequest = new SimpleMeshMessage("joinRequest");
+				joinRequest->setCommand(JOIN_REQUEST);
+				joinRequest->setSrcNode(thisNode);
+				joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
 
-			sendMessageToUDP(trackerAddress,NeighborReq);
+				int limit = neighborNum - LV->neighborMap.size();
+				std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->PartialView.begin();
+
+				for (; nodeIt != LV->PartialView.end() && limit > 0; ++nodeIt, limit--) {
+					if (LV->neighborMap.find(nodeIt->first) == LV->neighborMap.end())
+						sendMessageToUDP(nodeIt->first,joinRequest->dup());
+				}
+				delete joinRequest;
+			}
+			else
+				meshJoinTrackerMsg();
 			scheduleAt(simTime()+2,meshJoinRequestTimer);
 		}
 		else
-			scheduleAt(simTime()+20,meshJoinRequestTimer);
+			scheduleAt(simTime()+5,meshJoinRequestTimer);
+	}
+	else if (msg == parentRequestTimer) {
+		if (!LV->hasTreeboneParent) {
+
+			std::map <TransportAddress, neighborInfo>::iterator tempIt,nodeIt;
+			tempIt = LV->PartialView.begin();
+			for (nodeIt = LV->PartialView.begin(); nodeIt != LV->PartialView.end(); ++nodeIt) {
+				if (nodeIt->second.remainedNeighbor > 0 && nodeIt->second.isTreebone &&
+					(tempIt->second.treeLevel == -1 || nodeIt->second.treeLevel < tempIt->second.treeLevel))
+						tempIt = nodeIt;
+			}
+			if (tempIt != LV->PartialView.end() && tempIt->second.treeLevel != -1) {
+				SimpleMeshMessage* joinRequest = new SimpleMeshMessage("joinRequest");
+				joinRequest->setCommand(JOIN_REQUEST);
+				joinRequest->setSrcNode(thisNode);
+				joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+				sendMessageToUDP(tempIt->first,joinRequest);
+			}
+			else if (LV->isTreebone) {
+				// todo : prempt position of unstable child of treebone
+			}
+		}
+		scheduleAt(simTime()+1,parentRequestTimer);
 	}
 	else if(msg == remainNotificationTimer)
 	{
@@ -197,6 +240,13 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 	else if (msg == subscriptionExpiryTimer) {
 		std::map <TransportAddress, neighborInfo>::iterator tempIt, nodeIt = LV->PartialView.begin();
 
+		ScampMessage* alive = new ScampMessage("alive_scamp");
+		alive->setCommand(ALIVE_SCAMP);
+		alive->setSrcNode(thisNode);
+		alive->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+		neighborInfoToMsg(alive, neighborNum-LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+		alive->setTTL(simTime().dbl()+5.0);
+
 		while (nodeIt != LV->PartialView.end()) {
 			if (nodeIt->second.TTL <= simTime().dbl()) {
 				tempIt=nodeIt;
@@ -205,17 +255,11 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 				LV->PartialView.erase(tempIt);
 			}
 			else {
-				ScampMessage* alive = new ScampMessage("alive");
-				alive->setCommand(ALIVE);
-				alive->setSrcNode(thisNode);
-				alive->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-				neighborInfoToMsg(alive, neighborNum-LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
-				alive->setTTL(simTime().dbl()+5.0);
-
-				sendMessageToUDP(nodeIt->first,alive);
+				sendMessageToUDP(nodeIt->first,alive->dup());
 				++nodeIt;
 			}
 		}
+		delete alive;
 		scheduleAt(simTime()+5, subscriptionExpiryTimer);
 	}
 	else if (msg == resubscriptionTimer) {
@@ -227,6 +271,34 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 			resubscriptionProcess();
 		}
 		scheduleAt(simTime()+6,isolationRecoveryTimer);
+	}
+	else if (msg == aliveNotificationTimer) {
+		std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->neighborMap.begin();
+		SimpleMeshMessage* alive = new SimpleMeshMessage("alive");
+		alive->setCommand(ALIVE);
+		alive->setSrcNode(thisNode);
+		alive->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+		neighborInfoToMsg(alive, neighborNum-LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+		for (;nodeIt != LV->neighborMap.end(); ++nodeIt) {
+			sendMessageToUDP(nodeIt->first,alive->dup());
+		}
+		delete alive;
+		scheduleAt(simTime()+2, aliveNotificationTimer);
+	}
+	else if (msg == checkNeighborTimeout) {
+		std::map <TransportAddress, neighborInfo>::iterator tempIt, nodeIt = LV->neighborMap.begin();
+
+		while (nodeIt != LV->neighborMap.end()) {
+			if (simTime().dbl() - nodeIt->second.timeOut > 3) {
+				tempIt=nodeIt;
+				++nodeIt;
+				disconnectProcess(tempIt->first);
+			}
+			else {
+				++nodeIt;
+			}
+		}
+		scheduleAt(simTime()+3, checkNeighborTimeout);
 	}
 	else
 		DenaCastOverlay::handleAppMessage(msg);
@@ -281,7 +353,7 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 				sendMessageToUDP(trackerMsg->getNeighbors(i),newSubscription->dup());
 			}
 			delete newSubscription;
-			cancelEvent(resubscriptionTimer);		// todo : to be removed/changed later
+			cancelEvent(resubscriptionTimer);
 			scheduleAt(simTime()+5,resubscriptionTimer);
 		}
 		delete trackerMsg;
@@ -340,8 +412,8 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 
 				if (!LV->hasTreeboneParent && nF.isTreebone) {
 					LV->hasTreeboneParent = true;
-					LV->treeLevel = nF.treeLevel + 1;
 					LV->treeboneParent = simpleMeshmsg->getSrcNode();
+					LV->treeLevel = nF.treeLevel + 1;
 					joinAck->setAddAsChild(true);
 					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
 													"m=m,50,0,50,0;ls=red,1");
@@ -349,6 +421,7 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 				else
 					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
 														 "m=m,50,0,50,0;ls=green,1");
+
 
 				neighborInfoToMsg(joinAck, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
 				sendMessageToUDP(simpleMeshmsg->getSrcNode(),joinAck);
@@ -415,10 +488,19 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			if (LV->neighborMap.find(simpleMeshmsg->getSrcNode()) != LV->neighborMap.end())
 				LV->neighborMap.erase(simpleMeshmsg->getSrcNode());
 			deleteOverlayNeighborArrow(simpleMeshmsg->getSrcNode());
+
+			if (LV->hasTreeboneParent && LV->treeboneParent == simpleMeshmsg->getSrcNode()) {
+				LV->hasTreeboneParent = false;
+			}
 		}
 		else if(simpleMeshmsg->getCommand() == DISCONNECT)
 		{
 			disconnectProcess(simpleMeshmsg->getSrcNode());
+		}
+		else if (simpleMeshmsg->getCommand() == ALIVE) {
+			neighborInfo nF(simpleMeshmsg->getRemainNeighbor(), simTime().dbl(),
+							simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel());
+			LV->neighborMap[simpleMeshmsg->getSrcNode()]=nF;
 		}
 		delete simpleMeshmsg;
 	}
@@ -498,7 +580,7 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			LV->InView[scampMsg->getSrcNode()]=nF;
 		}
 
-		else if (scampMsg->getCommand() == ALIVE) {
+		else if (scampMsg->getCommand() == ALIVE_SCAMP) {
 			neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
 							scampMsg->getIsTreebone(), scampMsg->getTreeLevel());
 			LV->InView[scampMsg->getSrcNode()]=nF;
@@ -528,6 +610,7 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 	else
 		DenaCastOverlay::handleUDPMessage(msg);
 }
+
 void SimpleMesh::handleNodeGracefulLeaveNotification()
 {
 	neighborNum = 0;
@@ -600,7 +683,6 @@ void SimpleMesh::deleteVector(TransportAddress Node,std::vector <TransportAddres
 {
 	for (unsigned int i=0; i!=neighbors.size(); i++)
 	{
-
 		if(neighbors[i].isUnspecified())
 		{
 			neighbors.erase(neighbors.begin()+i,neighbors.begin()+1+i);
@@ -645,10 +727,15 @@ void SimpleMesh::selfUnRegister()
 void SimpleMesh::disconnectProcess(TransportAddress Node)
 {
 	//deleteVector(Node,LV->neighbors);
+	deleteOverlayNeighborArrow(Node);
 	if (LV->neighborMap.find(Node) != LV->neighborMap.end())
 		LV->neighborMap.erase(Node);
-	deleteOverlayNeighborArrow(Node);
-	if(!isSource)
+	if (LV->hasTreeboneParent && LV->treeboneParent == Node) {
+		LV->hasTreeboneParent = false;
+		cancelEvent(parentRequestTimer);
+		scheduleAt(simTime(),parentRequestTimer);
+	}
+	else if(!isSource)
 	{
 		cancelEvent(meshJoinRequestTimer);
 		scheduleAt(simTime(),meshJoinRequestTimer);
@@ -690,14 +777,28 @@ void SimpleMesh::resubscriptionProcess() {
 	}
 }
 
+void SimpleMesh::meshJoinTrackerMsg() {
+	DenaCastTrackerMessage* NeighborReq = new DenaCastTrackerMessage("NeighborReq");
+	NeighborReq->setCommand(NEIGHBOR_REQUEST);
+	NeighborReq->setNeighborSize(neighborNum - LV->neighborMap.size());
+	NeighborReq->setSrcNode(thisNode);
+	NeighborReq->setIsServer(false);
+	NeighborReq->setIsTreebone(LV->isTreebone);
+
+	sendMessageToUDP(trackerAddress,NeighborReq);
+}
+
 void SimpleMesh::finishOverlay()
 {
 	cancelAndDelete(subscriptionExpiryTimer);
+	cancelAndDelete(aliveNotificationTimer);
+	cancelAndDelete(checkNeighborTimeout);
 	if(!isSource) {
     	cancelAndDelete(meshJoinRequestTimer);
     	cancelAndDelete(treebonePromotionCheckTimer);
     	cancelAndDelete(resubscriptionTimer);
     	cancelAndDelete(isolationRecoveryTimer);
+    	cancelAndDelete(parentRequestTimer);
 	}
 	else
 		cancelAndDelete(serverNeighborTimer);

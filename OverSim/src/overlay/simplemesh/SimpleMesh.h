@@ -88,10 +88,14 @@ protected:
     cMessage* meshJoinRequestTimer; /**< self message for scheduling neighboring*/
     cMessage* remainNotificationTimer; /**< self message for scheduling send notification to server*/
     cMessage* serverNeighborTimer; /**< for gradual neighboring this self message plan for this job */
+
     cMessage* treebonePromotionCheckTimer;	// timer to check if the node can be promoted to treebone
     cMessage* subscriptionExpiryTimer; 		// timer to remove expired subscription from Partial View
     cMessage* resubscriptionTimer;			// timer to resubscribe
     cMessage* isolationRecoveryTimer;		// timer to check if node has been isolated from group
+    cMessage* aliveNotificationTimer;		// timer to send alive notification to neighbors.
+    cMessage* checkNeighborTimeout;			// timer to check for alive neighbors and remove the neighbors which left.
+    cMessage* parentRequestTimer;			// timer to check if the node has a treebone parent otherwise find one
 
 
     // statistics
@@ -148,6 +152,8 @@ public:
      * @param vector<TransportAddress> neighbor list
      */
     void deleteVector(TransportAddress Node,std::vector <TransportAddress> &neighbors);
+
+    void meshJoinTrackerMsg();		// To request neighbors from tracker for the first time
 };
 
 #endif /* SIMPLEMESH_H_ */

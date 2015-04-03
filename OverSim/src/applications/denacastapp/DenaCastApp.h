@@ -47,6 +47,7 @@ struct nodeBufferMap
 	double totalBandwidth; /**< the total bandwidth capacity of a node*/
 	double freeBandwidth; /**< the free bandwidth of neighbor in a defined time slot*/
 	int requestCounter; /**< a number that shows number of requested - number of response chunk*/
+	//double timeout;		// To keep track of last BM received from the neighbor
 };
 struct chunkPopulation
 {
