@@ -23,6 +23,8 @@
  * @author Behnam Ahmadifar, Yasser Seyyedi
  */
 
+// edited by vinita
+
 #include "Chunk.h"
 
 Chunk::Chunk()
@@ -92,3 +94,8 @@ int Chunk::getLateArrivalLossSize(int playBackPoint)
 			totalSize += chunk[i].getFrameLength();
 	return totalSize;
 }
+
+void Chunk::setReceiveTime(double rTime) {
+	receiveTime = rTime;
+}
+

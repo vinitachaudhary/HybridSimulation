@@ -183,6 +183,13 @@ protected:
 	double stat_startBufferMapExchange; /**< The time that node start to exchange it bufferMap*/
 	double stat_TotalReceivedSize; /** < */
 	double stat_RedundentSize; /** < */
+
+	bool firstChunkReceived; 	// true if node has received its first chunk.
+	double firstChunkTime; 		// time when node receives its first chunk.
+	double stat_FirstFrameToPlayerTime; // time when the node receives its first frame till it sends it to player.
+	double sumPlaybackLag;		// Sums the playback lag for all frames.
+	int frameCount;				// Counts the number of frames played.
+	double stat_PlaybackLag;	// Computes the average playback lag for all frames.
 };
 
 #endif /* DENACASTAPP_H_ */

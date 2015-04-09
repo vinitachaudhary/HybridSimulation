@@ -505,6 +505,10 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 
 				if (nF.isTreebone && (!LV->hasTreeboneParent || (LV->hasTreeboneParent && findingNewParent))) {
 					LV->hasTreeboneParent = true;
+					if (parentLeft) {
+						parentLeft = false;
+						sum_ParentReselectionTime+=simTime().dbl() - parentLeftTime;
+					}
 					joinAck->setAddAsChild(true);
 					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
 													"m=m,50,0,50,0;ls=red,1");
@@ -862,6 +866,11 @@ void SimpleMesh::disconnectProcess(TransportAddress Node)
 	if (LV->neighborMap.find(Node) != LV->neighborMap.end())
 		LV->neighborMap.erase(Node);
 	if (LV->hasTreeboneParent && LV->treeboneParent == Node) {
+		if (!parentLeft) {
+			parentLeft = true;
+			parentLeftTime = simTime().dbl();
+		}
+		countParentLeft++;
 		LV->hasTreeboneParent = false;
 		LV->treeLevel = -1;
 		cancelEvent(parentRequestTimer);
@@ -966,14 +975,14 @@ void SimpleMesh::finishOverlay()
 			}
 		}
 
-		/*if (countParentLeft > 0 && sum_ParentReselectionTime>0) {
+		if (countParentLeft > 0 && sum_ParentReselectionTime>0) {
 			stat_parentReselectionTime = sum_ParentReselectionTime/countParentLeft;
 			std::stringstream buf;
 			buf << "SimpleMesh: Average Parent Reselection time for parents leaving " << countParentLeft;
 			std::string s = buf.str();
 			globalStatistics->addStdDev(s.c_str(), stat_parentReselectionTime);
 			globalStatistics->addStdDev("SimpleMesh: Parent Reselection Time", stat_parentReselectionTime);
-		}*/
+		}
 	}
 
 	setOverlayReady(false);

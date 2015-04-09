@@ -92,6 +92,14 @@ void DenaCastApp::initializeApp(int stage)
 	stat_TotalReceivedSize = 0;
 	stat_RedundentSize = 0;
 
+    firstChunkReceived = false;
+    firstChunkTime = 0.0;
+    stat_FirstFrameToPlayerTime = 0.0;
+
+    sumPlaybackLag = 0.0;
+    frameCount = 0;
+    stat_PlaybackLag = 0.0;
+
 	// setting server and clients display string
 	if(isVideoServer)
 		getParentModule()->getParentModule()->setDisplayString("i=device/server;i2=block/circle_s");
@@ -166,6 +174,10 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 		}
 		else if(VideoMsg->getCommand() == CHUNK_RSP && !isVideoServer)
 		{
+			if (!firstChunkReceived) {
+				firstChunkReceived =true;
+				firstChunkTime = simTime().dbl();
+			}
 			if(!bufferMapExchangeStart)
 			{
 				scheduleAt(simTime(),requestChunkTimer);
@@ -199,6 +211,7 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				}
 				stat_TotalReceivedSize += VideoMsg->getChunk().getChunkByteLength();
 				Chunk InputChunk = VideoMsg->getChunk();
+				InputChunk.setReceiveTime(VideoMsg->getTimestamp().dbl());
 				InputChunk.setHopCout(InputChunk.getHopCount()+1);
 				LV->videoBuffer->setChunk(InputChunk);
 				LV->updateLocalBufferMap();
@@ -366,13 +379,14 @@ void DenaCastApp::checkForPlaying()
 		playingState = PLAYING;
 		stat_startSendToPlayer = simTime().dbl();
 		stat_startupDelay = simTime().dbl() - stat_startBuffering;
+		stat_FirstFrameToPlayerTime = stat_startSendToPlayer - firstChunkTime;
 		playbackPoint = LV->hostBufferMap->chunkNumbers[0]*chunkSize;
 	}
 }
 void DenaCastApp::sendFrameToPlayer()
 {
-	//std::cout<<"Client Playback point : "<<playbackPoint<<endl;
-
+	sumPlaybackLag+=(simTime().dbl() - LV->videoBuffer->getChunk(playbackPoint/chunkSize).getReceiveTime());
+	frameCount++;
 	VideoFrame vf = LV->videoBuffer->getFrame(playbackPoint);
 	vf.setFrameNumber(playbackPoint);
 	VideoMessage* playermessage = new VideoMessage("PlayerMessage");
@@ -503,4 +517,11 @@ void DenaCastApp::finishApp()
 		globalStatistics->addStdDev("DenaCastApp: start exchanging bufferMap", stat_startBufferMapExchange);
 	if(stat_TotalReceivedSize != 0)
 		globalStatistics->addStdDev("DenaCastApp: Frame Redundancy",stat_RedundentSize/stat_TotalReceivedSize *100);
+
+	if(stat_FirstFrameToPlayerTime != 0)
+		globalStatistics->addStdDev("DenaCastApp: First Frame received to player time", stat_FirstFrameToPlayerTime);
+	if (frameCount >0) {
+		stat_PlaybackLag = sumPlaybackLag/frameCount;
+		globalStatistics->addStdDev("DenaCastApp: Playback Lag", stat_PlaybackLag);
+	}
 }
