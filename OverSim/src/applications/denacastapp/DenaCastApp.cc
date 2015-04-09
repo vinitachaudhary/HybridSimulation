@@ -129,7 +129,6 @@ void DenaCastApp::handleTimerEvent(cMessage* msg)
 	else if (msg == meshPullTimer) {
 		if (meshPullActive || !LV->hasTreeboneParent || lastReceivedChunk*chunkSize < playbackPoint) {
 			meshPullActive = true;
-			// todo : inform overlay to look for treebone parent
 			selectRecieverSideScheduling();
 		}
 		else {

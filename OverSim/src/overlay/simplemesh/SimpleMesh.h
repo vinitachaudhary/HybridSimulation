@@ -54,6 +54,7 @@ protected:
     int sessionLength;		// Session length of simulation
     simtime_t joinTime;		// time when node joined the overlay - for measurement of node's age
     simtime_t lastAliveMsgTime; 	// time when last alive message was received
+    bool findingNewParent;			// true if node if trying to connect with a new parent and leaving current parent.
 
     // maps the nodes to the number of times their forwarded subscription is seen by this node
     std::map<TransportAddress, int> seenForwardedSubs;
@@ -75,12 +76,14 @@ protected:
 	/*
 	 * Helper function to avoid redundancy of set values of SimpleMeshMessage
 	 */
-    void neighborInfoToMsg (SimpleMeshMessage* msg, int _remainedNeighbor, bool _isTreebone, int _treeLevel);
+    void neighborInfoToMsg (SimpleMeshMessage* msg, int _remainedNeighbor,
+    		bool _isTreebone, int _treeLevel, int _numChildren);
 
     /*
 	 * Helper function to avoid redundancy of set values of ScampMessage
 	 */
-	void neighborInfoToMsg (ScampMessage* msg, int _remainedNeighbor, bool _isTreebone, int _treeLevel);
+	void neighborInfoToMsg (ScampMessage* msg, int _remainedNeighbor,
+			bool _isTreebone, int _treeLevel, int _numChildren);
 
 	void resubscriptionProcess();		// Procedure for a node to resubscribe to a random node in PartialView
 
@@ -97,6 +100,8 @@ protected:
     cMessage* checkNeighborTimeout;			// timer to check for alive neighbors and remove the neighbors which left.
     cMessage* parentRequestTimer;			// timer to check if the node has a treebone parent otherwise find one
 
+    cMessage* highDegreePreemptTimer; 		// timer for high degree preemption adaptation
+    cMessage* lowDelayJumpTimer;			// timer for low delay jump adaptation
 
     // statistics
 	uint32_t stat_TotalUpBandwidthUsage;
@@ -114,6 +119,18 @@ protected:
 	uint32_t stat_disconnectMessagesBytesSent; /**< number of sent bytes of disconnect messages */
 	uint32_t stat_addedNeighbors; /**< number of added neighbors during life cycle of this node */
 	uint32_t stat_nummeshJoinRequestTimer; /**< number of meshJoinRequestTimer self messages */
+
+	bool firstPeerAdded;	// whether the node has connected to peers for the first time.
+	double peerJoinTime;		// Time when node is created.
+	double peerSelectionTime;	// Time when peer selects its first neighbor.
+	double stat_peerSelectionTime; /**< time taken by node to connect to peers at startup */
+	double stat_peerSelectionToFirstChunkTime; // time taken by node after selecting a peer till it receives its first chunk.
+
+	bool parentLeft;	// whether a parent has left recently. For calculation of Parent Reselection Time.
+	double parentLeftTime;	// Time when the last parent left.
+	double sum_ParentReselectionTime;	// sums the parent reselection time for each parent leave.
+	double stat_parentReselectionTime;	// average time taken by node to reselect its parents.
+	int countParentLeft;	// Total count of number of parents disconnecting.
 
 public:
 

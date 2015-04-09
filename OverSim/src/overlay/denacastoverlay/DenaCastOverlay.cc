@@ -58,6 +58,8 @@ void DenaCastOverlay::initializeOverlay(int stage)
     stat_TotalByte = 0;
     stat_FECRedundent = 0;
 
+    firstChunkReceived = false;
+    firstChunkTime = 0.0;
 }
 DenaCastOverlay::~DenaCastOverlay()
 {
@@ -120,7 +122,11 @@ void DenaCastOverlay::handleUDPMessage(BaseOverlayMessage* msg)
 	{
 		EncapVideoMessage* denaCastOvelayMsg=dynamic_cast<EncapVideoMessage*>(msg);
 		VideoMessage* videoMsgUDP=  check_and_cast<VideoMessage*> (msg->decapsulate());
-		if(videoMsgUDP->getCommand() == CHUNK_RSP)
+		if(videoMsgUDP->getCommand() == CHUNK_RSP) {
+			if (!firstChunkReceived) {
+				firstChunkReceived =true;
+				firstChunkTime = simTime().dbl();
+			}
 			if(FEC)
 				bufferAndSendToApp(videoMsgUDP, denaCastOvelayMsg->hasBitError(),
 						denaCastOvelayMsg->getLength(), denaCastOvelayMsg->getSeqNo(),
@@ -132,6 +138,7 @@ void DenaCastOverlay::handleUDPMessage(BaseOverlayMessage* msg)
 				bufferAndSendToApp(videoMsgUDP, denaCastOvelayMsg->hasBitError(),
 										denaCastOvelayMsg->getLength(), denaCastOvelayMsg->getSeqNo(),
 										denaCastOvelayMsg->getRedundant());
+		}
 
 		else
 			send(videoMsgUDP,"appOut");

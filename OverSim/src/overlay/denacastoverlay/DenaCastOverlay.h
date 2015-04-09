@@ -23,6 +23,8 @@
  * @author Behnam Ahmadifar, Yasser Seyyedi
  */
 
+//edited by vinita
+
 #ifndef DENACASTOVERLAY_H_
 #define DENACASTOVERLAY_H_
 
@@ -32,8 +34,6 @@
 #include "VideoMessage_m.h"
 #include "ChunkPackets.h"
 #include "DenaCastApp.h"
-
-
 
 #define nCr(n,r) (factorial(n) / factorial(n-r)/factorial(r))
 
@@ -61,7 +61,8 @@ protected:
 	uint32_t stat_TotalByte; /**<Total Byte received*/
 	uint32_t stat_FECRedundent; /**< Total FEC redundant packet that received*/
 
-
+	bool firstChunkReceived; 	// true if node has received its first chunk.
+	double firstChunkTime; 		// time when node receives its first chunk.
 
 public:
 	virtual void initializeOverlay(int stage);

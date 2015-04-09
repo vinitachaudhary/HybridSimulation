@@ -84,6 +84,18 @@ void SimpleMesh::initializeOverlay(int stage)
 	stat_disconnectMessagesBytesSent = 0;
 	stat_addedNeighbors = 0;
 	stat_nummeshJoinRequestTimer = 0;
+
+	firstPeerAdded = false;
+	stat_peerSelectionTime = 0.0;
+	peerJoinTime = simTime().dbl();
+	stat_peerSelectionToFirstChunkTime = 0.0;
+	peerSelectionTime = 0.0;
+
+	parentLeft = false;
+	parentLeftTime = 0.0;
+	sum_ParentReselectionTime =0.0;
+	stat_parentReselectionTime = 0.0;
+	countParentLeft = 0;
 }
 
 void SimpleMesh::joinOverlay()
@@ -114,6 +126,11 @@ void SimpleMesh::joinOverlay()
 		scheduleAt(simTime()+6,isolationRecoveryTimer);
 		parentRequestTimer = new cMessage("parentRequestTimer");
 		scheduleAt(simTime()+2, parentRequestTimer);
+
+		highDegreePreemptTimer = new cMessage("highDegreePreemptTimer");
+		scheduleAt(simTime()+5, highDegreePreemptTimer);
+		lowDelayJumpTimer = new cMessage("lowDelayJumpTimer");
+		scheduleAt(simTime()+5, lowDelayJumpTimer);
 	}
 	else
 	{
@@ -124,6 +141,7 @@ void SimpleMesh::joinOverlay()
 		LV->isTreebone = true;
 		LV->treeLevel = 0;
 	}
+	findingNewParent = false;
 	setOverlayReady(true);
 }
 
@@ -131,14 +149,15 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 {
 	if(msg == meshJoinRequestTimer)
 	{
-		if(LV->neighborMap.size() < neighborNum)
+		if(LV->neighborMap.size() < std::min(neighborNum,passiveNeighbors))
 		{
 			if (LV->PartialView.size() > 0) {
 				SimpleMeshMessage* joinRequest = new SimpleMeshMessage("joinRequest");
 				joinRequest->setCommand(JOIN_REQUEST);
 				joinRequest->setSrcNode(thisNode);
 				joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(),
+						LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 
 				int limit = neighborNum - LV->neighborMap.size();
 				std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->PartialView.begin();
@@ -160,22 +179,32 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 		if (!LV->hasTreeboneParent) {
 
 			std::map <TransportAddress, neighborInfo>::iterator tempIt,nodeIt;
-			tempIt = LV->PartialView.begin();
-			for (nodeIt = LV->PartialView.begin(); nodeIt != LV->PartialView.end(); ++nodeIt) {
+			tempIt = LV->InView.begin();
+			for (nodeIt = LV->InView.begin(); nodeIt != LV->InView.end(); ++nodeIt) {
 				if (nodeIt->second.remainedNeighbor > 0 && nodeIt->second.isTreebone &&
 					(tempIt->second.treeLevel == -1 || nodeIt->second.treeLevel < tempIt->second.treeLevel))
 						tempIt = nodeIt;
 			}
-			if (tempIt != LV->PartialView.end() && tempIt->second.treeLevel != -1) {
+			if (tempIt != LV->InView.end() && tempIt->second.treeLevel != -1) {
 				SimpleMeshMessage* joinRequest = new SimpleMeshMessage("joinRequest");
 				joinRequest->setCommand(JOIN_REQUEST);
 				joinRequest->setSrcNode(thisNode);
 				joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(),
+						LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 				sendMessageToUDP(tempIt->first,joinRequest);
 			}
 			else if (LV->isTreebone) {
-				// todo : prempt position of unstable child of treebone
+				SimpleMeshMessage* moveRequest = new SimpleMeshMessage("moveRequest");
+				moveRequest->setCommand(MOVE_REQUEST);
+				moveRequest->setSrcNode(thisNode);
+				moveRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+
+				for (nodeIt = LV->InView.begin(); nodeIt != LV->InView.end(); ++nodeIt) {
+					if (nodeIt->second.treeLevel > 0 && !nodeIt->second.isTreebone)
+							sendMessageToUDP(nodeIt->first,moveRequest->dup());
+				}
+				delete moveRequest;
 			}
 		}
 		scheduleAt(simTime()+1,parentRequestTimer);
@@ -232,6 +261,11 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 				treebonePromoted->setSrcNode(thisNode);
 				sendMessageToUDP(trackerAddress,treebonePromoted);
 				//std::cout<<"Treebone Promotion"<<endl;
+
+				if (!LV->hasTreeboneParent) {
+					cancelEvent(parentRequestTimer);
+					scheduleAt(simTime(),parentRequestTimer);
+				}
 			}
 			else
 				scheduleAt(simTime()+1,treebonePromotionCheckTimer);
@@ -244,7 +278,8 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 		alive->setCommand(ALIVE_SCAMP);
 		alive->setSrcNode(thisNode);
 		alive->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-		neighborInfoToMsg(alive, neighborNum-LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+		neighborInfoToMsg(alive, neighborNum-LV->neighborMap.size(),
+				LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 		alive->setTTL(simTime().dbl()+5.0);
 
 		while (nodeIt != LV->PartialView.end()) {
@@ -278,7 +313,8 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 		alive->setCommand(ALIVE);
 		alive->setSrcNode(thisNode);
 		alive->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-		neighborInfoToMsg(alive, neighborNum-LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+		neighborInfoToMsg(alive, neighborNum-LV->neighborMap.size(),
+				LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 		for (;nodeIt != LV->neighborMap.end(); ++nodeIt) {
 			sendMessageToUDP(nodeIt->first,alive->dup());
 		}
@@ -300,6 +336,55 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 		}
 		scheduleAt(simTime()+3, checkNeighborTimeout);
 	}
+	else if (msg == highDegreePreemptTimer) {
+		if (LV->isTreebone) {
+			SimpleMeshMessage* moveRequest = new SimpleMeshMessage("moveRequest");
+			moveRequest->setCommand(MOVE_REQUEST);
+			moveRequest->setSrcNode(thisNode);
+			moveRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+
+			if (LV->hasTreeboneParent && LV->neighborMap[LV->treeboneParent].numChildren < LV->treeboneChildren.size()) {
+				findingNewParent = true;
+				sendMessageToUDP(LV->treeboneParent,moveRequest->dup());
+			}
+			else if (!LV->InView.empty()) {
+				std::map <TransportAddress, neighborInfo>::iterator nodeIt;
+				for (nodeIt = LV->InView.begin(); nodeIt != LV->InView.end(); ++nodeIt) {
+					if (nodeIt->second.isTreebone && nodeIt->second.treeLevel!=-1 &&
+						nodeIt->second.treeLevel < LV->treeLevel &&	nodeIt->second.numChildren < LV->treeboneChildren.size()) {
+						findingNewParent = true;
+						sendMessageToUDP(nodeIt->first,moveRequest->dup());
+					}
+				}
+			}
+			delete moveRequest;
+		}
+		scheduleAt(simTime()+5, highDegreePreemptTimer);
+	}
+	else if (msg == lowDelayJumpTimer) {
+		if (LV->hasTreeboneParent) {
+			std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->InView.begin();
+
+			if (!LV->InView.empty()) {
+				for (nodeIt = LV->InView.begin(); nodeIt != LV->InView.end(); ++nodeIt)
+					if (nodeIt->second.isTreebone && nodeIt->second.treeLevel!=-1 &&
+						(nodeIt->second.treeLevel < (LV->treeLevel - 1)) && nodeIt->second.remainedNeighbor > 0)
+						break;
+			}
+
+			if (nodeIt != LV->InView.end()) {
+				findingNewParent = true;
+				SimpleMeshMessage* joinRequest = new SimpleMeshMessage("joinRequest");
+				joinRequest->setCommand(JOIN_REQUEST);
+				joinRequest->setSrcNode(thisNode);
+				joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(),
+						LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
+				sendMessageToUDP(nodeIt->first, joinRequest);
+			}
+		}
+		scheduleAt(simTime()+5, lowDelayJumpTimer);
+	}
 	else
 		DenaCastOverlay::handleAppMessage(msg);
 }
@@ -314,7 +399,8 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			joinRequest->setCommand(JOIN_REQUEST);
 			joinRequest->setSrcNode(thisNode);
 			joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-			neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+			neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(),
+					LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 
 			int limit = 0;
 			if(trackerMsg->getNeighborsArraySize() < neighborNum - LV->neighborMap.size())
@@ -326,14 +412,14 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 					sendMessageToUDP(trackerMsg->getNeighbors(i),joinRequest->dup());
 			delete joinRequest;
 
-			neighborInfo nF(0, simTime().dbl(), true, -1);
+			neighborInfo nF(0, simTime().dbl(), true, -1, 0);
 
 			ScampMessage* newSubscription = new ScampMessage("newSubscription");
 			newSubscription->setCommand(NEW_SUBSCRIPTION);
 			newSubscription->setSrcNode(thisNode);
 			newSubscription->setBitLength(SIMPLEMESHMESSAGE_L(msg));
 			newSubscription->setToForward(false);
-			neighborInfoToMsg(newSubscription, neighborNum, false, -1);
+			neighborInfoToMsg(newSubscription, neighborNum, false, -1, LV->treeboneChildren.size());
 			newSubscription->setTTL(simTime().dbl()+5.0);
 
 			for (unsigned int i=0; i<trackerMsg->getNeighborsArraySize(); i++) {
@@ -367,14 +453,15 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			{
 				//LV->neighbors.push_back(simpleMeshmsg->getSrcNode());
 				neighborInfo nF(simpleMeshmsg->getRemainNeighbor(), simTime().dbl(),
-						simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel());
+						simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel(), simpleMeshmsg->getNumChildren());
 				LV->neighborMap.insert(std::make_pair<TransportAddress, neighborInfo> (simpleMeshmsg->getSrcNode(),nF));
 
 				SimpleMeshMessage* joinResponse = new SimpleMeshMessage("joinResponse");
 				joinResponse->setCommand(JOIN_RESPONSE);
 				joinResponse->setSrcNode(thisNode);
 				joinResponse->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-				neighborInfoToMsg(joinResponse, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+				neighborInfoToMsg(joinResponse, neighborNum - LV->neighborMap.size(),
+						LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 				sendMessageToUDP(simpleMeshmsg->getSrcNode(),joinResponse);
 
 				stat_joinRSP += 1;
@@ -398,11 +485,17 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			{
 				//LV->neighbors.push_back(simpleMeshmsg->getSrcNode());
 				neighborInfo nF(simpleMeshmsg->getRemainNeighbor(), simTime().dbl(),
-								simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel());
+								simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel(), simpleMeshmsg->getNumChildren());
 				LV->neighborMap.insert(std::make_pair<TransportAddress, neighborInfo> (simpleMeshmsg->getSrcNode(),nF));
 
 				if(!isRegistered)
 					selfRegister();
+
+				if (!firstPeerAdded) {
+					firstPeerAdded = true;
+					peerSelectionTime = simTime().dbl();
+					stat_peerSelectionTime = peerSelectionTime - peerJoinTime;
+				}
 
 				SimpleMeshMessage* joinAck = new SimpleMeshMessage("joinAck");
 				joinAck->setCommand(JOIN_ACK);
@@ -410,20 +503,31 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 				joinAck->setBitLength(SIMPLEMESHMESSAGE_L(msg));
 				joinAck->setAddAsChild(false);
 
-				if (!LV->hasTreeboneParent && nF.isTreebone) {
+				if (nF.isTreebone && (!LV->hasTreeboneParent || (LV->hasTreeboneParent && findingNewParent))) {
 					LV->hasTreeboneParent = true;
-					LV->treeboneParent = simpleMeshmsg->getSrcNode();
-					LV->treeLevel = nF.treeLevel + 1;
 					joinAck->setAddAsChild(true);
 					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
 													"m=m,50,0,50,0;ls=red,1");
+
+					if (findingNewParent && LV->hasTreeboneParent && nF.treeLevel!=-1 && ((nF.treeLevel+1) < LV->treeLevel)) {
+						SimpleMeshMessage* disconnectMsg = new SimpleMeshMessage("disconnect");
+						disconnectMsg->setCommand(DISCONNECT);
+						disconnectMsg->setSrcNode(thisNode);
+						disconnectMsg->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+						sendMessageToUDP(LV->treeboneParent,disconnectMsg);
+						findingNewParent = false;
+					}
+					LV->treeboneParent = simpleMeshmsg->getSrcNode();
+					if (nF.treeLevel != -1)
+						LV->treeLevel = nF.treeLevel + 1;
 				}
 				else
 					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
 														 "m=m,50,0,50,0;ls=green,1");
 
 
-				neighborInfoToMsg(joinAck, neighborNum - LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+				neighborInfoToMsg(joinAck, neighborNum - LV->neighborMap.size(),
+						LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 				sendMessageToUDP(simpleMeshmsg->getSrcNode(),joinAck);
 
 				stat_joinACK += 1;
@@ -449,12 +553,17 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 					selfRegister();
 				stat_addedNeighbors += 1;
 
-				std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->neighborMap.find(simpleMeshmsg->getSrcNode());
+				/*std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->neighborMap.find(simpleMeshmsg->getSrcNode());
 
 				nodeIt->second.isTreebone = simpleMeshmsg->getIsTreebone();
 				nodeIt->second.treeLevel = simpleMeshmsg->getTreeLevel();
 				nodeIt->second.remainedNeighbor = simpleMeshmsg->getRemainNeighbor();
 				nodeIt->second.timeOut = simTime().dbl();
+				nodeIt->second.numChildren = simpleMeshmsg->getNumChildren();*/
+
+				neighborInfo nF(simpleMeshmsg->getRemainNeighbor(), simTime().dbl(), simpleMeshmsg->getIsTreebone(),
+								simpleMeshmsg->getTreeLevel(), simpleMeshmsg->getNumChildren());
+				LV->neighborMap[simpleMeshmsg->getSrcNode()]=nF;
 
 				if (simpleMeshmsg->getAddAsChild())
 					LV->treeboneChildren.push_back(simpleMeshmsg->getSrcNode());
@@ -499,8 +608,30 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 		}
 		else if (simpleMeshmsg->getCommand() == ALIVE) {
 			neighborInfo nF(simpleMeshmsg->getRemainNeighbor(), simTime().dbl(),
-							simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel());
+							simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel(), simpleMeshmsg->getNumChildren());
 			LV->neighborMap[simpleMeshmsg->getSrcNode()]=nF;
+			if (LV->hasTreeboneParent && LV->treeboneParent == simpleMeshmsg->getSrcNode() && nF.treeLevel != -1)
+				LV->treeLevel = nF.treeLevel+1;
+		}
+		else if (simpleMeshmsg->getCommand() == MOVE_REQUEST) {
+			if (LV->hasTreeboneParent) {
+				SimpleMeshMessage* moveResponse = new SimpleMeshMessage("moveResponse");
+				moveResponse->setCommand(MOVE_RESPONSE);
+				moveResponse->setSrcNode(LV->treeboneParent);
+				moveResponse->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				sendMessageToUDP(simpleMeshmsg->getSrcNode(),moveResponse);
+			}
+		}
+		else if (simpleMeshmsg->getCommand() == MOVE_RESPONSE) {
+			if (findingNewParent || !LV->hasTreeboneParent) {
+				SimpleMeshMessage* joinRequest = new SimpleMeshMessage("joinRequest");
+				joinRequest->setCommand(JOIN_REQUEST);
+				joinRequest->setSrcNode(thisNode);
+				joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(),
+						LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
+				sendMessageToUDP(simpleMeshmsg->getSrcNode(),joinRequest);
+			}
 		}
 		delete simpleMeshmsg;
 	}
@@ -510,8 +641,8 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 		ScampMessage* scampMsg = check_and_cast<ScampMessage*>(msg);
 
 		if (scampMsg->getCommand() == NEW_SUBSCRIPTION) {
-			neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
-							scampMsg->getIsTreebone(), scampMsg->getTreeLevel(), scampMsg->getTTL());
+			neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(), scampMsg->getIsTreebone(),
+							scampMsg->getTreeLevel(), scampMsg->getTTL(), scampMsg->getNumChildren());
 			LV->PartialView[scampMsg->getSrcNode()] = nF;
 
 			if (scampMsg->getToForward()) {
@@ -523,7 +654,7 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 				forwardSubscription->setBitLength(SIMPLEMESHMESSAGE_L(msg));
 				forwardSubscription->setNodeToBeSubscribed(scampMsg->getSrcNode());
 				neighborInfoToMsg(forwardSubscription, scampMsg->getRemainNeighbor(),
-						scampMsg->getIsTreebone(), scampMsg->getTreeLevel());
+						scampMsg->getIsTreebone(), scampMsg->getTreeLevel(), scampMsg->getNumChildren());
 				forwardSubscription->setTTL(scampMsg->getTTL());
 
 				std::map <TransportAddress, neighborInfo>::iterator nodeIt;
@@ -549,8 +680,8 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 				double keepProbablility = 1/((double)(1+LV->PartialView.size()));
 
 				if (randomNumDbl <= keepProbablility) {
-					neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
-									scampMsg->getIsTreebone(), scampMsg->getTreeLevel(), scampMsg->getTTL());
+					neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(), scampMsg->getIsTreebone(),
+									scampMsg->getTreeLevel(), scampMsg->getTTL(), scampMsg->getNumChildren());
 					LV->PartialView[scampMsg->getNodeToBeSubscribed()]=nF;
 
 					ScampMessage* subscriptionAck = new ScampMessage("subscriptionAck");
@@ -558,7 +689,7 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 					subscriptionAck->setSrcNode(thisNode);
 					subscriptionAck->setBitLength(SIMPLEMESHMESSAGE_L(msg));
 					neighborInfoToMsg(subscriptionAck, neighborNum - LV->neighborMap.size(),
-										LV->isTreebone, LV->treeLevel);
+										LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 					sendMessageToUDP(scampMsg->getNodeToBeSubscribed(), subscriptionAck);
 				}
 				else if (LV->PartialView.size() > 0) {
@@ -575,14 +706,14 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 		}
 
 		else if (scampMsg->getCommand() == SUBSCRIPTION_ACK) {
-			neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
-							scampMsg->getIsTreebone(), scampMsg->getTreeLevel());
+			neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(), scampMsg->getIsTreebone(),
+					scampMsg->getTreeLevel(), scampMsg->getNumChildren());
 			LV->InView[scampMsg->getSrcNode()]=nF;
 		}
 
 		else if (scampMsg->getCommand() == ALIVE_SCAMP) {
 			neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
-							scampMsg->getIsTreebone(), scampMsg->getTreeLevel());
+							scampMsg->getIsTreebone(), scampMsg->getTreeLevel(), scampMsg->getNumChildren());
 			LV->InView[scampMsg->getSrcNode()]=nF;
 
 			lastAliveMsgTime = simTime();
@@ -592,8 +723,8 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			seenForwardedSubs.erase(scampMsg->getSrcNode());
 
 			if (scampMsg->getNodeToBeSubscribed() != scampMsg->getSrcNode()) {
-				neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),
-								scampMsg->getIsTreebone(), scampMsg->getTreeLevel(), scampMsg->getTTL());
+				neighborInfo nF(scampMsg->getRemainNeighbor(), simTime().dbl(),scampMsg->getIsTreebone(),
+								scampMsg->getTreeLevel(), scampMsg->getTTL(), scampMsg->getNumChildren());
 				LV->PartialView[scampMsg->getNodeToBeSubscribed()]=nF;
 
 				ScampMessage* subscriptionAck = new ScampMessage("subscriptionAck");
@@ -601,7 +732,7 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 				subscriptionAck->setSrcNode(thisNode);
 				subscriptionAck->setBitLength(SIMPLEMESHMESSAGE_L(msg));
 				neighborInfoToMsg(subscriptionAck, neighborNum - LV->neighborMap.size(),
-									LV->isTreebone, LV->treeLevel);
+									LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 				sendMessageToUDP(scampMsg->getNodeToBeSubscribed(), subscriptionAck);
 			}
 		}
@@ -631,7 +762,7 @@ void SimpleMesh::handleNodeGracefulLeaveNotification()
 				partialViewIt = LV->PartialView.begin();
 			unsubscribe->setNodeToBeSubscribed(partialViewIt->first);
 			neighborInfoToMsg(unsubscribe, partialViewIt->second.remainedNeighbor,
-					partialViewIt->second.isTreebone, partialViewIt->second.treeLevel);
+					partialViewIt->second.isTreebone, partialViewIt->second.treeLevel, partialViewIt->second.numChildren);
 			unsubscribe->setTTL(partialViewIt->second.TTL);
 
 			sendMessageToUDP(inViewIt->first, unsubscribe->dup());
@@ -726,12 +857,13 @@ void SimpleMesh::selfUnRegister()
 }
 void SimpleMesh::disconnectProcess(TransportAddress Node)
 {
-	//deleteVector(Node,LV->neighbors);
+	deleteVector(Node,LV->treeboneChildren);
 	deleteOverlayNeighborArrow(Node);
 	if (LV->neighborMap.find(Node) != LV->neighborMap.end())
 		LV->neighborMap.erase(Node);
 	if (LV->hasTreeboneParent && LV->treeboneParent == Node) {
 		LV->hasTreeboneParent = false;
+		LV->treeLevel = -1;
 		cancelEvent(parentRequestTimer);
 		scheduleAt(simTime(),parentRequestTimer);
 	}
@@ -746,16 +878,20 @@ void SimpleMesh::disconnectProcess(TransportAddress Node)
 	send(videoMsg,"appOut");
 }
 
-void SimpleMesh::neighborInfoToMsg (SimpleMeshMessage* msg, int _remainedNeighbor, bool _isTreebone, int _treeLevel) {
+void SimpleMesh::neighborInfoToMsg (SimpleMeshMessage* msg, int _remainedNeighbor,
+					bool _isTreebone, int _treeLevel, int _numChildren) {
 	msg->setRemainNeighbor(_remainedNeighbor);
 	msg->setIsTreebone(_isTreebone);
 	msg->setTreeLevel(_treeLevel);
+	msg->setNumChildren(_numChildren);
 }
 
-void SimpleMesh::neighborInfoToMsg (ScampMessage* msg, int _remainedNeighbor, bool _isTreebone, int _treeLevel) {
+void SimpleMesh::neighborInfoToMsg (ScampMessage* msg, int _remainedNeighbor,
+					bool _isTreebone, int _treeLevel, int _numChildren) {
 	msg->setRemainNeighbor(_remainedNeighbor);
 	msg->setIsTreebone(_isTreebone);
 	msg->setTreeLevel(_treeLevel);
+	msg->setNumChildren(_numChildren);
 }
 
 void SimpleMesh::resubscriptionProcess() {
@@ -770,7 +906,8 @@ void SimpleMesh::resubscriptionProcess() {
 		newSubscription->setSrcNode(thisNode);
 		newSubscription->setBitLength(SIMPLEMESHMESSAGE_L(msg));
 		newSubscription->setToForward(true);
-		neighborInfoToMsg(newSubscription, neighborNum-LV->neighborMap.size(), LV->isTreebone, LV->treeLevel);
+		neighborInfoToMsg(newSubscription, neighborNum-LV->neighborMap.size(),
+				LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 		newSubscription->setTTL(simTime().dbl()+5.0);
 
 		sendMessageToUDP(nodeIt->first,newSubscription);
@@ -799,6 +936,8 @@ void SimpleMesh::finishOverlay()
     	cancelAndDelete(resubscriptionTimer);
     	cancelAndDelete(isolationRecoveryTimer);
     	cancelAndDelete(parentRequestTimer);
+    	cancelAndDelete(highDegreePreemptTimer);
+    	cancelAndDelete(lowDelayJumpTimer);
 	}
 	else
 		cancelAndDelete(serverNeighborTimer);
@@ -816,5 +955,26 @@ void SimpleMesh::finishOverlay()
 	globalStatistics->addStdDev("SimpleMesh: Number of JOINRQ selfMessages", stat_nummeshJoinRequestTimer);
 	globalStatistics->addStdDev("SimpleMesh: Download bandwidth", downBandwidth);
 	globalStatistics->addStdDev("SimpleMesh: Upload bandwidth", upBandwidth);
+
+	if (!isSource) {
+		if (stat_peerSelectionTime > 0) {
+			globalStatistics->addStdDev("SimpleMesh: Peer Selection Time", stat_peerSelectionTime);
+
+			if (firstChunkTime > 0) {
+				stat_peerSelectionToFirstChunkTime = firstChunkTime - peerSelectionTime;
+				globalStatistics->addStdDev("SimpleMesh: Peer Selection to First Chunk Received Time", stat_peerSelectionToFirstChunkTime);
+			}
+		}
+
+		/*if (countParentLeft > 0 && sum_ParentReselectionTime>0) {
+			stat_parentReselectionTime = sum_ParentReselectionTime/countParentLeft;
+			std::stringstream buf;
+			buf << "SimpleMesh: Average Parent Reselection time for parents leaving " << countParentLeft;
+			std::string s = buf.str();
+			globalStatistics->addStdDev(s.c_str(), stat_parentReselectionTime);
+			globalStatistics->addStdDev("SimpleMesh: Parent Reselection Time", stat_parentReselectionTime);
+		}*/
+	}
+
 	setOverlayReady(false);
 }

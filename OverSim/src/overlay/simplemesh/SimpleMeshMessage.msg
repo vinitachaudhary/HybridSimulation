@@ -48,6 +48,8 @@ enum SIMPLEMESHCommand
     FORWARD_SUBSCRIPTION = 8;
     SUBSCRIPTION_ACK = 9;
     UNSUBSCRIBE = 10;
+    MOVE_REQUEST = 11;
+    MOVE_RESPONSE = 12;
 }
 //	join message in SimpleMesh 
 //  @author Behnam Ahmadifar, Yasser Seyyedi
@@ -60,6 +62,7 @@ packet SimpleMeshMessage extends BaseOverlayMessage
 	int remainNeighbor;			// number of remaining neighbor node can accept
 	int treeLevel;				// node depth in tree
 	bool addAsChild;			// true if node wants to be added as child
+	int numChildren;			// number of children node has
 }
 
 packet ScampMessage extends BaseOverlayMessage {
@@ -70,5 +73,6 @@ packet ScampMessage extends BaseOverlayMessage {
 	int remainNeighbor;			// number of remaining neighbor node can accept
 	int treeLevel;				// node depth in tree
 	double TTL;					// time to live for subscription messages
+	int numChildren;			// number of children node has
 	TransportAddress nodeToBeSubscribed;  // address of the node that is to be subscribed in case of Forward Subscriptions
 }

@@ -39,12 +39,15 @@ struct neighborInfo
 	bool isTreebone;			// true if the node is in treebone
 	int treeLevel;				// node depth in the tree - source at level 0
 	double TTL;					// time to live for subscription message
+	int numChildren;			// number of children node currently has
 
-	neighborInfo() {};
-	neighborInfo(int _remainedNeighbor, double _timeOut, bool _isTreebone, int _treeLevel) :
-		remainedNeighbor(_remainedNeighbor), timeOut(_timeOut), isTreebone(_isTreebone), treeLevel(_treeLevel) {};
-	neighborInfo(int _remainedNeighbor, double _timeOut, bool _isTreebone, int _treeLevel, double _ttl) :
-			remainedNeighbor(_remainedNeighbor), timeOut(_timeOut), isTreebone(_isTreebone), treeLevel(_treeLevel), TTL(_ttl) {};
+	neighborInfo() : remainedNeighbor(0), isTreebone(false), treeLevel(-1), numChildren(0){};
+	neighborInfo(int _remainedNeighbor, double _timeOut, bool _isTreebone, int _treeLevel, int _numChildren) :
+		remainedNeighbor(_remainedNeighbor), timeOut(_timeOut),
+		isTreebone(_isTreebone), treeLevel(_treeLevel), numChildren(_numChildren) {};
+	neighborInfo(int _remainedNeighbor, double _timeOut, bool _isTreebone, int _treeLevel, double _ttl, int _numChildren) :
+			remainedNeighbor(_remainedNeighbor), timeOut(_timeOut), isTreebone(_isTreebone),
+			treeLevel(_treeLevel), TTL(_ttl), numChildren(_numChildren) {};
 
 };
 
