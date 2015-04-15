@@ -95,8 +95,8 @@ void VideoBuffer::setFrame(VideoFrame vFrame)
 		if(chunkBuffer[ExtractedChunkNum - chunkBuffer[0].getChunkNumber()].isComplete())
 			lastSetChunk = ExtractedChunkNum;
 	}
-	else
-		std::cout << "(ChunkBuffer::setFrame) ChunkBuffer Out of boundary!!!!!!!!" << std::endl;
+	/*else
+		std::cout << "(ChunkBuffer::setFrame) ChunkBuffer Out of boundary!!!!!!!!" << std::endl;*/
 }
 VideoFrame VideoBuffer::getFrame(int FrameNumber)
 {
@@ -105,12 +105,12 @@ VideoFrame VideoBuffer::getFrame(int FrameNumber)
 			ExtractedChunkNum <= chunkBuffer[bufferSize-1].getChunkNumber())
 		return chunkBuffer[ExtractedChunkNum - chunkBuffer[0].getChunkNumber()]
 		                   .chunk[FrameNumber%chunkSize].getVFrame();
-	else
+	/*else
 	{
 		std::cout << chunkBuffer[0].getChunkNumber() << "  to  "<< chunkBuffer[bufferSize-1].getChunkNumber()<< std::endl;
 		std::cout << "ExtractedChunkNum : "<<ExtractedChunkNum <<std::endl;
 		std::cout << "(VideoBuffer::getFrame) ChunkBuffer Out of boundary!!!!!!!!" << std::endl;
-	}
+	}*/
 }
 Chunk VideoBuffer::getChunk(int ChunkNumber)
 {
@@ -119,12 +119,12 @@ Chunk VideoBuffer::getChunk(int ChunkNumber)
 	{
 		return chunkBuffer[ChunkNumber - chunkBuffer[0].getChunkNumber()];
 	}
-	else
+	/*else
 	{
 		std::cout << chunkBuffer[0].getChunkNumber() << "  to  "<< chunkBuffer[bufferSize-1].getChunkNumber()<< std::endl;
 		std::cout << "ChunkNum : "<<ChunkNumber <<std::endl;
 		std::cout << "(ChunkBuffer:getChunk) Chunk Not Found !!!!!"<< std::endl;
-	}
+	}*/
 }
 void VideoBuffer::setChunk(Chunk InputChunk)
 {
@@ -135,7 +135,11 @@ void VideoBuffer::setChunk(Chunk InputChunk)
 		chunkBuffer[index] = InputChunk;
 		lastSetChunk = chunkBuffer[index].getChunkNumber();
 	}
-	else
-		std::cout << "(ChunkBuffer::setChunk) ChunkBuffer Out of boundary!!!!!!!!" << std::endl;
+	/*else
+	{
+		std::cout << chunkBuffer[0].getChunkNumber() << "  to  "<< chunkBuffer[bufferSize-1].getChunkNumber()<< std::endl;
+		std::cout << "ChunkNum : "<<InputChunk.getChunkNumber() <<std::endl;
+		std::cout << "(ChunkBuffer:setChunk) Chunk Not Found !!!!!"<< std::endl;
+	}*/
 }
 

@@ -292,7 +292,7 @@ void DenaCastApp::handleChunkRequest(TransportAddress& SrcNode,int chunkNo, bool
 		chunkRsp->setCommand(CHUNK_RSP);
 		chunkRsp->setChunk(CH);
 		chunkRsp->setIsPushed(push);
-		chunkRsp->setTimestamp();
+		//chunkRsp->setTimestamp();
 
 		chunkRsp->setByteLength(CH.getChunkByteLength()+ VIDEOMESSAGE_L(msg)/8);
 		send(chunkRsp,"to_lowerTier");

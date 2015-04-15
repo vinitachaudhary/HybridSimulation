@@ -96,6 +96,12 @@ void SimpleMesh::initializeOverlay(int stage)
 	sum_ParentReselectionTime =0.0;
 	stat_parentReselectionTime = 0.0;
 	countParentLeft = 0;
+
+	neighborLeft = false;
+	neighborLeftTime = 0.0;
+	sum_NeighborReselectionTime = 0;
+	stat_neighborReselectionTime = 0.0;
+	countNeighborLeft = 0;
 }
 
 void SimpleMesh::joinOverlay()
@@ -140,6 +146,7 @@ void SimpleMesh::joinOverlay()
 		selfRegister();
 		LV->isTreebone = true;
 		LV->treeLevel = 0;
+		stat_num_treebone++;
 	}
 	findingNewParent = false;
 	setOverlayReady(true);
@@ -159,7 +166,7 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(),
 						LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 
-				int limit = neighborNum - LV->neighborMap.size();
+				int limit = passiveNeighbors;
 				std::map <TransportAddress, neighborInfo>::iterator nodeIt = LV->PartialView.begin();
 
 				for (; nodeIt != LV->PartialView.end() && limit > 0; ++nodeIt, limit--) {
@@ -170,31 +177,30 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 			}
 			else
 				meshJoinTrackerMsg();
-			scheduleAt(simTime()+2,meshJoinRequestTimer);
 		}
-		else
-			scheduleAt(simTime()+5,meshJoinRequestTimer);
+		scheduleAt(simTime()+2,meshJoinRequestTimer);
 	}
 	else if (msg == parentRequestTimer) {
 		if (!LV->hasTreeboneParent) {
 
-			std::map <TransportAddress, neighborInfo>::iterator tempIt,nodeIt;
-			tempIt = LV->InView.begin();
+			SimpleMeshMessage* joinRequest = new SimpleMeshMessage("joinRequest");
+			joinRequest->setCommand(JOIN_REQUEST);
+			joinRequest->setSrcNode(thisNode);
+			joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
+			neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(),
+					LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
+
+			std::map <TransportAddress, neighborInfo>::iterator nodeIt;
+			bool requestSent = false;
 			for (nodeIt = LV->InView.begin(); nodeIt != LV->InView.end(); ++nodeIt) {
-				if (nodeIt->second.remainedNeighbor > 0 && nodeIt->second.isTreebone &&
-					(tempIt->second.treeLevel == -1 || nodeIt->second.treeLevel < tempIt->second.treeLevel))
-						tempIt = nodeIt;
+				if (nodeIt->second.remainedNeighbor > 0 && nodeIt->second.isTreebone && nodeIt->second.treeLevel != -1 ) {
+					sendMessageToUDP(nodeIt->first,joinRequest->dup());
+					requestSent = true;
+				}
 			}
-			if (tempIt != LV->InView.end() && tempIt->second.treeLevel != -1) {
-				SimpleMeshMessage* joinRequest = new SimpleMeshMessage("joinRequest");
-				joinRequest->setCommand(JOIN_REQUEST);
-				joinRequest->setSrcNode(thisNode);
-				joinRequest->setBitLength(SIMPLEMESHMESSAGE_L(msg));
-				neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(),
-						LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
-				sendMessageToUDP(tempIt->first,joinRequest);
-			}
-			else if (LV->isTreebone) {
+			delete joinRequest;
+
+			if (!requestSent && LV->isTreebone) {
 				SimpleMeshMessage* moveRequest = new SimpleMeshMessage("moveRequest");
 				moveRequest->setCommand(MOVE_REQUEST);
 				moveRequest->setSrcNode(thisNode);
@@ -266,6 +272,8 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 					cancelEvent(parentRequestTimer);
 					scheduleAt(simTime(),parentRequestTimer);
 				}
+
+				stat_num_treebone++;
 			}
 			else
 				scheduleAt(simTime()+1,treebonePromotionCheckTimer);
@@ -325,7 +333,7 @@ void SimpleMesh::handleTimerEvent(cMessage* msg)
 		std::map <TransportAddress, neighborInfo>::iterator tempIt, nodeIt = LV->neighborMap.begin();
 
 		while (nodeIt != LV->neighborMap.end()) {
-			if (simTime().dbl() - nodeIt->second.timeOut > 3) {
+			if (simTime().dbl() - nodeIt->second.timeOut > 5) {
 				tempIt=nodeIt;
 				++nodeIt;
 				disconnectProcess(tempIt->first);
@@ -402,13 +410,11 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 			neighborInfoToMsg(joinRequest, neighborNum - LV->neighborMap.size(),
 					LV->isTreebone, LV->treeLevel, LV->treeboneChildren.size());
 
-			int limit = 0;
-			if(trackerMsg->getNeighborsArraySize() < neighborNum - LV->neighborMap.size())
-				limit = trackerMsg->getNeighborsArraySize();
-			else
-				limit = neighborNum - LV->neighborMap.size();
-			for(unsigned int i=0 ; i <trackerMsg->getNeighborsArraySize() ; i++)
-				if(limit-- > 0 && LV->neighborMap.find(trackerMsg->getNeighbors(i)) == LV->neighborMap.end())
+			int limit = std::min(neighborNum,passiveNeighbors);
+			limit = std::min(limit,(int)trackerMsg->getNeighborsArraySize());
+
+			for(unsigned int i=0 ; i <trackerMsg->getNeighborsArraySize() && limit>0 ; i++, limit--)
+				if(LV->neighborMap.find(trackerMsg->getNeighbors(i)) == LV->neighborMap.end())
 					sendMessageToUDP(trackerMsg->getNeighbors(i),joinRequest->dup());
 			delete joinRequest;
 
@@ -488,6 +494,11 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 								simpleMeshmsg->getIsTreebone(), simpleMeshmsg->getTreeLevel(), simpleMeshmsg->getNumChildren());
 				LV->neighborMap.insert(std::make_pair<TransportAddress, neighborInfo> (simpleMeshmsg->getSrcNode(),nF));
 
+				if (neighborLeft) {
+					neighborLeft = false;
+					sum_NeighborReselectionTime+=simTime().dbl() - neighborLeftTime;
+				}
+
 				if(!isRegistered)
 					selfRegister();
 
@@ -525,9 +536,10 @@ void SimpleMesh::handleUDPMessage(BaseOverlayMessage* msg)
 					if (nF.treeLevel != -1)
 						LV->treeLevel = nF.treeLevel + 1;
 				}
-				else
+				else {
 					showOverlayNeighborArrow(simpleMeshmsg->getSrcNode(), false,
 														 "m=m,50,0,50,0;ls=green,1");
+				}
 
 
 				neighborInfoToMsg(joinAck, neighborNum - LV->neighborMap.size(),
@@ -863,24 +875,31 @@ void SimpleMesh::disconnectProcess(TransportAddress Node)
 {
 	deleteVector(Node,LV->treeboneChildren);
 	deleteOverlayNeighborArrow(Node);
-	if (LV->neighborMap.find(Node) != LV->neighborMap.end())
-		LV->neighborMap.erase(Node);
+	LV->PartialView.erase(Node);
+	LV->InView.erase(Node);
+
 	if (LV->hasTreeboneParent && LV->treeboneParent == Node) {
 		if (!parentLeft) {
 			parentLeft = true;
 			parentLeftTime = simTime().dbl();
+			countParentLeft++;
 		}
-		countParentLeft++;
 		LV->hasTreeboneParent = false;
 		LV->treeLevel = -1;
 		cancelEvent(parentRequestTimer);
 		scheduleAt(simTime(),parentRequestTimer);
 	}
-	else if(!isSource)
+	else if(!isSource && LV->neighborMap.find(Node)!=LV->neighborMap.end())
 	{
+		if (!neighborLeft) {
+			neighborLeft = true;
+			neighborLeftTime = simTime().dbl();
+			countNeighborLeft++;
+		}
 		cancelEvent(meshJoinRequestTimer);
 		scheduleAt(simTime(),meshJoinRequestTimer);
 	}
+	LV->neighborMap.erase(Node);
 	VideoMessage* videoMsg = new VideoMessage();
 	videoMsg->setCommand(NEIGHBOR_LEAVE);
 	videoMsg->setSrcNode(Node);
@@ -965,6 +984,8 @@ void SimpleMesh::finishOverlay()
 	globalStatistics->addStdDev("SimpleMesh: Download bandwidth", downBandwidth);
 	globalStatistics->addStdDev("SimpleMesh: Upload bandwidth", upBandwidth);
 
+	globalStatistics->addStdDev("SimpleMesh: Treebone Nodes : ", stat_num_treebone);
+
 	if (!isSource) {
 		if (stat_peerSelectionTime > 0) {
 			globalStatistics->addStdDev("SimpleMesh: Peer Selection Time", stat_peerSelectionTime);
@@ -983,7 +1004,18 @@ void SimpleMesh::finishOverlay()
 			globalStatistics->addStdDev(s.c_str(), stat_parentReselectionTime);
 			globalStatistics->addStdDev("SimpleMesh: Parent Reselection Time", stat_parentReselectionTime);
 		}
+
+		if (countNeighborLeft > 0 && sum_NeighborReselectionTime>0) {
+			stat_neighborReselectionTime = sum_NeighborReselectionTime/countNeighborLeft;
+			std::stringstream buf;
+			buf << "SimpleMesh: Average Neighbor Reselection time for neighbors leaving " << countNeighborLeft;
+			std::string s = buf.str();
+			globalStatistics->addStdDev(s.c_str(), stat_neighborReselectionTime);
+			globalStatistics->addStdDev("SimpleMesh: Neighbor Reselection Time", stat_neighborReselectionTime);
+		}
 	}
 
 	setOverlayReady(false);
 }
+
+int SimpleMesh::stat_num_treebone = 0;

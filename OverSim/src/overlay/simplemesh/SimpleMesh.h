@@ -132,6 +132,14 @@ protected:
 	double stat_parentReselectionTime;	// average time taken by node to reselect its parents.
 	int countParentLeft;	// Total count of number of parents disconnecting.
 
+	bool neighborLeft;	// whether a parent has left recently. For calculation of Parent Reselection Time.
+	double neighborLeftTime;	// Time when the last parent left.
+	double sum_NeighborReselectionTime;	// sums the parent reselection time for each parent leave.
+	double stat_neighborReselectionTime;	// average time taken by node to reselect its parents.
+	int countNeighborLeft;	// Total count of number of parents disconnecting.
+
+	static int stat_num_treebone;  // number of treebone nodes in the overlay.
+
 public:
 
     /**

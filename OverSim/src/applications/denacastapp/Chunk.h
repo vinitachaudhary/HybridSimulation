@@ -23,8 +23,6 @@
  * @author Behnam Ahmadifar, Yasser Seyyedi
  */
 
-//edited by vinita
-
 #ifndef CHUNK_H_
 #define CHUNK_H_
 #include "VideoFrame.h"
@@ -36,7 +34,7 @@ protected:
 	short int chunkSize; /**< Number of frames in the chunk object*/
 	short int hopCount; /**< Hop count of the chunk that traverse through the network*/
 	double creationTime; /**< Time that the chunk is created. It is use for calculating end to end delay*/
-	double receiveTime; // Time when node receives this chunk. For calculation of playback lag.
+
 public:
 	VideoFrame* chunk; /**< array that keeps video frames as a chunk*/
 	/**
@@ -122,15 +120,5 @@ public:
 	 * @return integer size of late arrival frames
 	 */
 	int getLateArrivalLossSize(int playBackPoint);
-
-	/**
-	 * for getting the time of receiving this chunk
-	 * @return double receive time value
-	 */
-	double getReceiveTime() {return receiveTime;}
-	/*
-	 * For setting the receive time of this node
-	 */
-	void setReceiveTime(double rTime);
 };
 #endif /* CHUNK_H_ */

@@ -21,6 +21,8 @@
  * @author Helge Backhaus, Ingmar Baumgart
  */
 
+// edited by vinita
+
 #include <algorithm>
 
 #include "GlobalStatisticsAccess.h"
@@ -55,14 +57,19 @@ void LifetimeChurn::initializeChurn()
 
     for (int i = 0; i < targetOverlayTerminalNum; i++) {
 
-        scheduleCreateNodeAt(truncnormal(initialMean * i, initialDeviation),
+		int p = std::max(0,poisson(initialMean*i));
+		scheduleCreateNodeAt(p,
+        initFinishedTime + distributionFunction()
+                - p, i);
+
+        /*scheduleCreateNodeAt(truncnormal(initialMean * i, initialDeviation),
                              initFinishedTime + distributionFunction()
                                      - truncnormal(initialMean * i,
-                                                   initialDeviation), i);
+                                                   initialDeviation), i);*/
 
         // create same number of currently dead nodes
-        scheduleCreateNodeAt(initFinishedTime + distributionFunction(),
-                             distributionFunction(), targetOverlayTerminalNum + i);
+        /*scheduleCreateNodeAt(initFinishedTime + distributionFunction(),
+                             distributionFunction(), targetOverlayTerminalNum + i);*/
     }
 
     initFinishedTimer = new cMessage("initFinishedTimer");
@@ -125,8 +132,8 @@ void LifetimeChurn::deleteNode(TransportAddress& addr, int contextPos)
 {
     underlayConfigurator->preKillNode(NodeType(), &addr);
 
-    scheduleCreateNodeAt(simTime() + distributionFunction(),
-                         distributionFunction(), contextPos);
+    /*scheduleCreateNodeAt(simTime() + distributionFunction(),
+                         distributionFunction(), contextPos);*/
 
     RECORD_STATS(globalStatistics->recordOutVector(
                  "LifetimeChurn: Time between deletes",
