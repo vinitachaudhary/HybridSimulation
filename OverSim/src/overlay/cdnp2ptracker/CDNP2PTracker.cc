@@ -18,6 +18,8 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 //
 
+// edited by vinita
+
 /**
  * @file CDNP2PTracker.cc
  * @author Yasser Seyyedi, Behnam Ahmadifar
@@ -70,8 +72,8 @@ void CDNP2PTracker::handleUDPMessage(BaseOverlayMessage* msg)
 					treeNeighborSize, meshNeighborSize);
 
 			int tempTreeNeighborSize = treeNeighborSize;
-			//std::cout<<"treeneighborSize : "<<treeNeighborSize<<" meshNeighborSize : "<<meshNeighborSize<<" size : "<<size<<endl;
 
+			// Fill list with at most 70% treebone nodes if available and remaining with mesh nodes.
 			unsigned int s = 0.7*size;
 			if (treeNeighborSize > s && treeNeighborSize!=1) {
 				tempTreeNeighborSize = s;
@@ -80,8 +82,6 @@ void CDNP2PTracker::handleUDPMessage(BaseOverlayMessage* msg)
 			}
 			else
 				meshNeighborSize = std::min(meshNeighborSize, (size-treeNeighborSize));
-
-			//std::cout<<"treeneighborSize : "<<treeNeighborSize<<" meshNeighborSize : "<<meshNeighborSize<<" size : "<<size<<" s : "<<s<<endl;
 
 			std::vector <TransportAddress> list;
 			FillList(list, treeboneList, trackerMsg->getSrcNode(),treeNeighborSize);
@@ -168,7 +168,6 @@ void CDNP2PTracker::handleUDPMessage(BaseOverlayMessage* msg)
 						break;
 					}
 			}
-//			checkPeersTimOuts();
 		}
 		else if (trackerMsg->getCommand() == TREEBONE_PROMOTION) {
 			nodeInfo nF;
@@ -188,7 +187,6 @@ void CDNP2PTracker::handleUDPMessage(BaseOverlayMessage* msg)
 
 			int selectServer = getServerNumber(nF.tAddress);
 			treeboneList.insert (std::make_pair<int,nodeInfo>(selectServer,nF));
-			//std::cout<<"treebone promoted"<<endl;
 		}
 		delete trackerMsg;
 	}
@@ -254,7 +252,6 @@ int CDNP2PTracker::calculateSize(unsigned int neighborSize, TransportAddress& so
 			if(nodeIt->second.tAddress != sourceNode && nodeIt->second.remainedNeighbor > 0)
 				meshNeighborSize += 1;
 		for(nodeIt = treeboneList.begin() ; nodeIt != treeboneList.end() ; nodeIt++) {
-			//std::cout<<"remain N : "<<nodeIt->second.remainedNeighbor<<endl;
 			if(nodeIt->second.tAddress != sourceNode && nodeIt->second.remainedNeighbor > 0)
 				treeNeighborSize += 1;
 		}
@@ -265,12 +262,10 @@ int CDNP2PTracker::calculateSize(unsigned int neighborSize, TransportAddress& so
 			if(nodeIt->first == selectServer && nodeIt->second.tAddress != sourceNode && nodeIt->second.remainedNeighbor > 0)
 				meshNeighborSize += 1;
 		for(nodeIt = treeboneList.begin() ; nodeIt != treeboneList.end() ; nodeIt++) {
-			//std::cout<<"remain N : "<<nodeIt->second.remainedNeighbor<<" sel server : "<<nodeIt->first<<endl;
 			if(nodeIt->first == selectServer && nodeIt->second.tAddress != sourceNode && nodeIt->second.remainedNeighbor > 0)
 				treeNeighborSize += 1;
 		}
 	}
-	//std::cout<<" func treeneighborSize : "<<treeNeighborSize<<" meshNeighborSize : "<<meshNeighborSize<<endl;
 
 	if(meshNeighborSize + treeNeighborSize > neighborSize)
 		return neighborSize;
@@ -331,7 +326,6 @@ void CDNP2PTracker::checkPeersTimeOuts(std::multimap <int,nodeInfo> list)
 		{
 			tempIt=nodeIt;
 			++nodeIt;
-			//std::cout << "node: " << nodeIt->second.tAddress << "  timeOut: " << simTime() - nodeIt->second.timeOut << std::endl;
 			peerServers.erase(tempIt->second.tAddress);
 			list.erase(tempIt);
 		}

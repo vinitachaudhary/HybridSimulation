@@ -43,7 +43,7 @@ enum TRACKERCommand
     SELF_REGISTER = 3;		//Self Register 
     SELF_UNREGISTER = 4;
     REMAIN_NEIGHBOR = 5;
-    TREEBONE_PROMOTION = 6;
+    TREEBONE_PROMOTION = 6;		// Node sends to tracker upon promotion to treebone
 }
 packet DenaCastTrackerMessage extends BaseOverlayMessage 
 {

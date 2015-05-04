@@ -23,6 +23,7 @@
  * @author Behnam Ahmadifar, Yasser Seyyedi
  */
 
+// edited by vinita
 
 #include "DenaCastApp.h"
 #include <GlobalStatistics.h>
@@ -35,10 +36,6 @@ Define_Module(DenaCastApp);
 
 void DenaCastApp::initializeApp(int stage)
 {
-//	cConfiguration *cfg = getConfig();
-//	cSimulation::getActiveSimulation()->getEnvir()->getConfigEx()->getAsDouble();
-//	std::cout << toDouble(ev.getConfig()->getConfigValue("sim-time-limit")) << std::endl;
-//	std::cout << atof(ev.getConfig()->getConfigValue("sim-time-limit")) << std::endl;
 	if (stage != MIN_STAGE_APP)
 		return;
 	//initialize parameters
@@ -135,6 +132,7 @@ void DenaCastApp::handleTimerEvent(cMessage* msg)
 
 	}
 	else if (msg == meshPullTimer) {
+		// Periodically check if chunks need to be pulled over mesh.
 		if (meshPullActive || !LV->hasTreeboneParent || lastReceivedChunk*chunkSize < playbackPoint) {
 			meshPullActive = true;
 			selectRecieverSideScheduling();
@@ -183,7 +181,6 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				scheduleAt(simTime(),requestChunkTimer);
 				scheduleAt(simTime(),playingTimer);
 				scheduleAt(simTime()+bufferMapExchangePeriod+uniform(0,0.25),bufferMapTimer);
-				//scheduleAt(simTime(), neighborTimeoutTimer);
 				stat_startBufferMapExchange = simTime().dbl() + bufferMapExchangePeriod;
 				stat_startBuffering = simTime().dbl();
 				bufferMapExchangeStart=true;
@@ -194,9 +191,8 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				for(int i=0 ; i<shiftnum ; i++)
 					LV->videoBuffer->shiftChunkBuf();
 				LV->updateLocalBufferMap();
-
-				//needed for push
 			}
+
 			bool redundantState = false;
 			if(VideoMsg->getChunk().isComplete() && !VideoMsg->hasBitError())
 			{
@@ -216,6 +212,7 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				LV->videoBuffer->setChunk(InputChunk);
 				LV->updateLocalBufferMap();
 
+				// keep track of the chunks which are pushed, indicating active parent.
 				if (VideoMsg->getIsPushed()) {
 					lastReceivedChunk = InputChunk.getChunkNumber();
 					meshPullActive = false;
@@ -232,6 +229,7 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				}
 
 				if (!redundantState) {
+					// Push the received chunk to children.
 					for (unsigned int i=0; i < LV->treeboneChildren.size(); i++) {
 						handleChunkRequest(LV->treeboneChildren[i],LV->videoBuffer->lastSetChunk,true);
 						lastSentChunk = LV->videoBuffer->lastSetChunk;
@@ -264,7 +262,6 @@ void DenaCastApp::handleLowerMessage(cMessage* msg)
 				scheduleAt(simTime(),playingTimer);
 				scheduleAt(simTime()+bufferMapExchangePeriod,bufferMapTimer);
 				scheduleAt(simTime(), meshPullTimer);
-				//scheduleAt(simTime(), neighborTimeoutTimer);
 				stat_startBufferMapExchange = simTime().dbl() + bufferMapExchangePeriod;
 				stat_startBuffering = simTime().dbl();
 				bufferMapExchangeStart = true;
@@ -308,17 +305,9 @@ void DenaCastApp::handleUpperMessage(cMessage* msg)
 			LV->videoBuffer->setFrame(VideoMsg->getVFrame());
 			LV->updateLocalBufferMap();
 			delete msg;
-			/*if (isVideoServer)
-				std::cout<<"Frame num : "<<VideoMsg->getVFrame().getFrameNumber()<<" Last Set Chunk : "<<LV->videoBuffer->lastSetChunk<<" Last set Frame : "<<LV->videoBuffer->lastSetFrame<<endl;
-			*/
 
-			/*if (LV->hostBufferMap->findChunk(lastSentChunk+1)) {
-				lastSentChunk++;
-				for (unsigned int i=0; i < LV->treeboneChildren.size(); i++) {
-					handleChunkRequest(LV->treeboneChildren[i],lastSentChunk,true);
-				}
-			}*/
 			if (lastSentChunk != LV->videoBuffer->lastSetChunk) {
+				// Push the generated chunk at server camera to children
 				for (unsigned int i=0; i < LV->treeboneChildren.size(); i++) {
 					handleChunkRequest(LV->treeboneChildren[i],LV->videoBuffer->lastSetChunk,true);
 				}
@@ -338,7 +327,6 @@ void DenaCastApp::updateNeighborBMList(BufferMapMessage* BufferMap_Recieved)
 		{
 			neighborsBufferMaps[i].buffermap = BufferMap_Recieved->getBuffermap();
 			neighborsBufferMaps[i].totalBandwidth = BufferMap_Recieved->getTotalBandwidth();
-			//neighborsBufferMaps[i].timeout = simTime().dbl();
 			find = true;
 			break;
 		}
@@ -397,6 +385,7 @@ void DenaCastApp::sendFrameToPlayer()
 	if(vf.getFrameType() == 'N')
 		checkAvailability_RateControlLoss();
 	else {
+		// Stat Collection for Playback Lag
 		sumPlaybackLag+=simTime().dbl() - vf.getCreationTime();
 		frameCount++;
 	}
@@ -525,6 +514,8 @@ void DenaCastApp::finishApp()
 
 	if(stat_FirstFrameToPlayerTime != 0)
 		globalStatistics->addStdDev("DenaCastApp: First Frame received to player time", stat_FirstFrameToPlayerTime);
+
+	// Stat Collection for Playback lag : taking average of all frame's playback lag.
 	if (frameCount >0) {
 		stat_PlaybackLag = sumPlaybackLag/frameCount;
 		globalStatistics->addStdDev("DenaCastApp: Playback Lag", stat_PlaybackLag);

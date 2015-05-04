@@ -75,13 +75,13 @@ void DenaCastOverlay::handleAppMessage(cMessage* msg)
 		denaCastOvelayMsg->setByteLength(ENCAPBUFFERMAP_L(msg)/8);
 		bufferMapmsg->setTotalBandwidth(getUpBandwidth()/1024);
 		denaCastOvelayMsg->encapsulate(bufferMapmsg);
+
 		if(!bufferMapExchangeStart)
 		{
 			bufferMapExchangeStart = true;
 			firstBufferMapSending = simTime().dbl();
 		}
-		/*for (unsigned int i=0 ; i!=LV->neighbors.size(); i++)
-			sendMessageToUDP(LV->neighbors[i], denaCastOvelayMsg->dup());*/
+
 		std::map <TransportAddress, neighborInfo>::iterator neighborIt;
 		for (neighborIt = LV->neighborMap.begin(); neighborIt != LV->neighborMap.end(); ++neighborIt)
 			sendMessageToUDP(neighborIt->first, denaCastOvelayMsg->dup());
@@ -123,6 +123,7 @@ void DenaCastOverlay::handleUDPMessage(BaseOverlayMessage* msg)
 		EncapVideoMessage* denaCastOvelayMsg=dynamic_cast<EncapVideoMessage*>(msg);
 		VideoMessage* videoMsgUDP=  check_and_cast<VideoMessage*> (msg->decapsulate());
 		if(videoMsgUDP->getCommand() == CHUNK_RSP) {
+			// Stat Collection for Startup Delay : Buffering time
 			if (!firstChunkReceived) {
 				firstChunkReceived =true;
 				firstChunkTime = simTime().dbl();

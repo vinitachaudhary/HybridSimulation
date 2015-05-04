@@ -57,19 +57,11 @@ void LifetimeChurn::initializeChurn()
 
     for (int i = 0; i < targetOverlayTerminalNum; i++) {
 
+    	// Poisson arrival rate
 		int p = std::max(0,poisson(initialMean*i));
 		scheduleCreateNodeAt(p,
         initFinishedTime + distributionFunction()
                 - p, i);
-
-        /*scheduleCreateNodeAt(truncnormal(initialMean * i, initialDeviation),
-                             initFinishedTime + distributionFunction()
-                                     - truncnormal(initialMean * i,
-                                                   initialDeviation), i);*/
-
-        // create same number of currently dead nodes
-        /*scheduleCreateNodeAt(initFinishedTime + distributionFunction(),
-                             distributionFunction(), targetOverlayTerminalNum + i);*/
     }
 
     initFinishedTimer = new cMessage("initFinishedTimer");
@@ -132,6 +124,7 @@ void LifetimeChurn::deleteNode(TransportAddress& addr, int contextPos)
 {
     underlayConfigurator->preKillNode(NodeType(), &addr);
 
+    // commented out to avoid formation of a new node after a node leaves
     /*scheduleCreateNodeAt(simTime() + distributionFunction(),
                          distributionFunction(), contextPos);*/
 

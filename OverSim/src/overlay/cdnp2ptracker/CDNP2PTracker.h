@@ -111,6 +111,7 @@ protected:
 
 	// multimap of serverID to peers in Treebone
     std::multimap <int,nodeInfo> treeboneList;
+
     /**< map contains all peer that send at least one message to server
      * TransportAddress = Peer TransportAddress , integer = serverID
      * */

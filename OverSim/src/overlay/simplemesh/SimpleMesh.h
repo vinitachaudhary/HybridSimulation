@@ -49,7 +49,7 @@ protected:
     bool isRegistered; /**< if this node registered in the tracker */
     bool serverGradualNeighboring; /**< true if gradual neighbor is required for source node*/
     TransportAddress trackerAddress; /**< Transport address of tracker node */
-    std::map <TransportAddress,double> neighborTimeOut; /**< */
+    std::map <TransportAddress,double> neighborTimeOut; /**<Timeout for neighbors - to check for failed nodes>*/
 
     int sessionLength;		// Session length of simulation
     simtime_t joinTime;		// time when node joined the overlay - for measurement of node's age
@@ -74,13 +74,13 @@ protected:
     void disconnectProcess(TransportAddress node);
 
 	/*
-	 * Helper function to avoid redundancy of set values of SimpleMeshMessage
+	 * Helper function to avoid redundancy to set values of SimpleMeshMessage
 	 */
     void neighborInfoToMsg (SimpleMeshMessage* msg, int _remainedNeighbor,
     		bool _isTreebone, int _treeLevel, int _numChildren);
 
     /*
-	 * Helper function to avoid redundancy of set values of ScampMessage
+	 * Helper function to avoid redundancy to set values of ScampMessage
 	 */
 	void neighborInfoToMsg (ScampMessage* msg, int _remainedNeighbor,
 			bool _isTreebone, int _treeLevel, int _numChildren);

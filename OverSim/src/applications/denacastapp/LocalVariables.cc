@@ -23,7 +23,6 @@
  * @author Yasser Seyyedi, Behnam Ahmadifar
  */
 
-// edited by vinita
 #include "LocalVariables.h"
 
 Define_Module(LocalVariables);
